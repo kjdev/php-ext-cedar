@@ -1,0 +1,36 @@
+{
+    "name": "kjdev/cedar",
+    "description": "PHP extension that evaluates Cedar policies locally with an Amazon Verified Permissions (AVP) compatible API.",
+    "type": "php-ext",
+    "license": "MIT",
+    "keywords": [
+        "cedar",
+        "authorization",
+        "policy",
+        "verified-permissions",
+        "avp",
+        "rbac",
+        "abac"
+    ],
+    "homepage": "https://github.com/kjdev/php-ext-cedar",
+    "authors": [
+        {
+            "name": "kjdev",
+            "homepage": "https://github.com/kjdev"
+        }
+    ],
+    "require": {
+        "php": "^8.4"
+    },
+    "php-ext": {
+        "extension-name": "cedar",
+        "priority": 80,
+        "support-zts": false,
+        "support-nts": true,
+        "configure-options": []
+    },
+    "support": {
+        "issues": "https://github.com/kjdev/php-ext-cedar/issues",
+        "source": "https://github.com/kjdev/php-ext-cedar"
+    }
+}

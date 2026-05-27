@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: PHP ${{ matrix.php-version }} (${{ matrix.ts }})
+    runs-on: ubuntu-latest
+    # ZTS support is on the roadmap; keep ZTS rows informational only
+    # so the matrix surfaces results without blocking PRs.
+    continue-on-error: ${{ matrix.ts == 'zts' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+        ts: [nts, zts]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          set-safe-directory: true
+          token: ${{ github.token }}
+
+      - name: Setup PHP (${{ matrix.php-version }} ${{ matrix.ts }})
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: none
+          coverage: none
+          ini-values: zend.assertions=1
+        env:
+          phpts: ${{ matrix.ts }}
+
+      - name: Show PHP build info
+        run: |
+          php -v
+          php -r 'echo "ZTS: ", PHP_ZTS ? "yes" : "no", PHP_EOL;'
+          php-config --configure-options | tr ' ' '\n' | grep -i zts || true
+
+      - name: phpize
+        run: phpize
+
+      - name: configure
+        run: ./configure --enable-cedar
+
+      - name: make
+        run: make -j2
+
+      - name: make test
+        run: |
+          # NO_INTERACTION=1 keeps run-tests.php non-interactive on
+          # failure; REPORT_EXIT_STATUS=1 makes a single failed test
+          # fail the job.
+          NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test
+
+      - name: Upload failed test diffs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a #v7.0.1
+        with:
+          name: phpt-failures-${{ matrix.php-version }}-${{ matrix.ts }}
+          path: |
+            tests/**/*.diff
+            tests/**/*.log
+            tests/**/*.out
+          if-no-files-found: ignore
