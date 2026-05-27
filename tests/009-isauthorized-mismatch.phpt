@@ -31,4 +31,4 @@ try {
 ?>
 --EXPECT--
 policyStoreId 'wrong-id' does not match the bound PolicyStore
-isAuthorized(): 'policyStoreId' (string) is required
+'policyStoreId' (string) is required

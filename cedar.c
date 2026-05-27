@@ -9,6 +9,8 @@
 #include "config.h"
 #endif
 
+#include <stdbool.h>
+
 #include "php.h"
 #include "ext/standard/info.h"
 #include "ext/random/php_random_csprng.h"
@@ -256,7 +258,8 @@ PHP_METHOD(Cedar_PolicyStore, policyIds)
  * ============================================================ */
 
 typedef struct {
-    zval         policy_store;   /* PolicyStore object held by reference */
+    zval         policy_store;     /* PolicyStore object held by reference */
+    zval         identity_source;  /* options['identitySource'] array or UNDEF */
     zend_object  std;
 } cedar_authz_client_t;
 
@@ -278,6 +281,7 @@ cedar_authz_client_create(zend_class_entry *ce)
     object_properties_init(&intern->std, ce);
     intern->std.handlers = &cedar_authz_client_handlers;
     ZVAL_UNDEF(&intern->policy_store);
+    ZVAL_UNDEF(&intern->identity_source);
     return &intern->std;
 }
 
@@ -286,6 +290,7 @@ cedar_authz_client_free(zend_object *obj)
 {
     cedar_authz_client_t *intern = cedar_authz_client_from_obj(obj);
     zval_ptr_dtor(&intern->policy_store);
+    zval_ptr_dtor(&intern->identity_source);
     zend_object_std_dtor(&intern->std);
 }
 
@@ -293,13 +298,24 @@ PHP_METHOD(Cedar_AuthorizationClient, __construct)
 {
     cedar_authz_client_t *intern;
     zval                 *store;
+    HashTable            *options = NULL;
 
-    ZEND_PARSE_PARAMETERS_START(1, 1)
+    ZEND_PARSE_PARAMETERS_START(1, 2)
         Z_PARAM_OBJECT_OF_CLASS(store, cedar_ce_PolicyStore)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY_HT(options)
     ZEND_PARSE_PARAMETERS_END();
 
     intern = Z_CEDAR_AUTHZ_CLIENT_P(ZEND_THIS);
     ZVAL_COPY(&intern->policy_store, store);
+
+    if (options) {
+        zval *id_src = zend_hash_str_find(options,
+            "identitySource", sizeof("identitySource") - 1);
+        if (id_src && Z_TYPE_P(id_src) == IS_ARRAY) {
+            ZVAL_COPY(&intern->identity_source, id_src);
+        }
+    }
 }
 
 /* Extract a php_cedar_str_t pair (type, id) from an AVP-style
@@ -714,11 +730,12 @@ cedar_str_equal(const php_cedar_str_t *a, const php_cedar_str_t *b)
 }
 
 /* Walk entities.entityList. For each entry whose identifier matches
- * the request principal/resource, inject its attributes; parents are
- * always forwarded to the corresponding add_*_parent call. */
+ * the request principal/action/resource, inject its attributes; parents
+ * are always forwarded to the corresponding add_*_parent call. */
 static void
 cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
                      const php_cedar_str_t *p_type, const php_cedar_str_t *p_id,
+                     const php_cedar_str_t *a_type, const php_cedar_str_t *a_id,
                      const php_cedar_str_t *r_type, const php_cedar_str_t *r_id)
 {
     zval *zv_entities, *zv_list, *entity;
@@ -733,7 +750,8 @@ cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(zv_list), entity) {
         zval               *zv_id_obj, *zv_attrs, *zv_parents;
         php_cedar_str_t     e_type, e_id;
-        int                 match_principal, match_resource, matched_subject;
+        int                 match_principal, match_action, match_resource;
+        int                 matched_subject;
 
         if (Z_TYPE_P(entity) != IS_ARRAY) continue;
         zv_id_obj = zend_hash_str_find(Z_ARRVAL_P(entity),
@@ -745,11 +763,12 @@ cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
             continue;
         }
 
-        /* The same identifier may be both principal and resource; apply
-         * attributes and parents to every target it matches. */
+        /* The same identifier may be principal, action, and/or resource;
+         * apply attributes and parents to every target it matches. */
         match_principal = cedar_str_equal(&e_type, p_type) && cedar_str_equal(&e_id, p_id);
+        match_action    = cedar_str_equal(&e_type, a_type) && cedar_str_equal(&e_id, a_id);
         match_resource  = cedar_str_equal(&e_type, r_type) && cedar_str_equal(&e_id, r_id);
-        matched_subject = match_principal || match_resource;
+        matched_subject = match_principal || match_action || match_resource;
 
         if (matched_subject) {
             zv_attrs = zend_hash_str_find(Z_ARRVAL_P(entity),
@@ -766,6 +785,10 @@ cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
                     name.len  = ZSTR_LEN(key);
                     if (match_principal) {
                         arc = cedar_apply_top_attr(ctx, CEDAR_TARGET_PRINCIPAL,
+                                                   &name, val);
+                    }
+                    if (arc == PHP_CEDAR_OK && match_action) {
+                        arc = cedar_apply_top_attr(ctx, CEDAR_TARGET_ACTION,
                                                    &name, val);
                     }
                     if (arc == PHP_CEDAR_OK && match_resource) {
@@ -805,6 +828,9 @@ cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
                 if (match_principal) {
                     php_cedar_eval_ctx_add_principal_parent(ctx, &pt, &pi);
                 }
+                if (match_action) {
+                    php_cedar_eval_ctx_add_action_parent(ctx, &pt, &pi);
+                }
                 if (match_resource) {
                     php_cedar_eval_ctx_add_resource_parent(ctx, &pt, &pi);
                 }
@@ -813,28 +839,59 @@ cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
     } ZEND_HASH_FOREACH_END();
 }
 
-/* Populate return_value with the AVP-compatible response shape. */
+/* Populate return_value with the AVP-compatible response shape.
+ *
+ * AVP rules: forbid overrides permit. If any forbid matched, decision
+ * is DENY and determiningPolicies lists only the forbids. Otherwise, if
+ * any permit matched, decision is ALLOW and determiningPolicies lists
+ * the permits. With no matches at all, decision is DENY (implicit) and
+ * determiningPolicies is empty. The unused permit/forbid bucket is
+ * released here so the caller can hand both buckets unconditionally. */
 static void
 cedar_finalize_response(zval *return_value,
-                        int has_allow, int has_forbid,
-                        zval *determining, zval *errors)
+                        zval *permit_ids, zval *forbid_ids, zval *errors)
 {
-    const char *decision = (has_forbid || !has_allow) ? "DENY" : "ALLOW";
+    int         has_forbid = zend_hash_num_elements(Z_ARRVAL_P(forbid_ids)) > 0;
+    const char *decision   = has_forbid ? "DENY"
+                           : (zend_hash_num_elements(Z_ARRVAL_P(permit_ids)) > 0
+                              ? "ALLOW" : "DENY");
 
     array_init(return_value);
     add_assoc_string(return_value, "decision", decision);
-    add_assoc_zval(return_value,   "determiningPolicies", determining);
-    add_assoc_zval(return_value,   "errors", errors);
+    if (has_forbid) {
+        add_assoc_zval(return_value, "determiningPolicies", forbid_ids);
+        zval_ptr_dtor(permit_ids);
+    } else {
+        add_assoc_zval(return_value, "determiningPolicies", permit_ids);
+        zval_ptr_dtor(forbid_ids);
+    }
+    add_assoc_zval(return_value, "errors", errors);
 }
 
-/* Evaluate one policy_set and update the aggregated decision state. */
+/* Append {policyId: policy_id} to the target array. */
+static void
+cedar_push_policy_id(zval *target, zend_string *policy_id)
+{
+    zval entry;
+    if (!policy_id) {
+        return;
+    }
+    array_init(&entry);
+    add_assoc_str(&entry, "policyId", zend_string_copy(policy_id));
+    add_next_index_zval(target, &entry);
+}
+
+/* Evaluate one policy_set and accumulate matched policy ids per kind.
+ * AVP semantics: when at least one forbid matches across the whole
+ * evaluation, determiningPolicies must list only the forbids; otherwise
+ * it lists every matching permit. Buffer permits and forbids separately
+ * so the caller can pick the right bucket once all bundles are done. */
 static void
 cedar_eval_one_bundle(zend_string *policy_id,
                       php_cedar_policy_set_t *ps,
                       php_cedar_eval_ctx_t *ctx,
                       php_cedar_log_t *log,
-                      int *has_allow, int *has_forbid,
-                      zval *determining)
+                      zval *permit_ids, zval *forbid_ids)
 {
     php_cedar_decision_detail_t detail;
     php_cedar_decision_t        d;
@@ -843,19 +900,122 @@ cedar_eval_one_bundle(zend_string *policy_id,
     d = php_cedar_eval_detail(ps, ctx, log, &detail);
 
     if (d == PHP_CEDAR_DECISION_ALLOW) {
-        *has_allow = 1;
+        cedar_push_policy_id(permit_ids, policy_id);
     } else if (d == PHP_CEDAR_DECISION_DENY && detail.npolicies > 0) {
-        /* DENY reached because at least one forbid matched. */
-        *has_forbid = 1;
-    } else {
-        /* Implicit DENY (no permit matched); do not add to determining. */
+        /* DENY because at least one forbid matched. */
+        cedar_push_policy_id(forbid_ids, policy_id);
+    }
+    /* Implicit DENY (no policy matched) contributes nothing. */
+}
+
+/* Common evaluation routine shared by isAuthorized() and
+ * isAuthorizedWithToken().
+ *
+ * Caller supplies the resolved principal / action / resource. Optional
+ * group_parents (an array of {entityType, entityId} entries) are
+ * additionally registered as principal parents — this is how the token
+ * path injects identitySource.groupIdsClaim. When include_principal is
+ * non-zero, the response array carries an extra "principal" entry
+ * matching AVP's IsAuthorizedWithToken output shape.
+ *
+ * Throws ResourceNotFoundException / EvaluationException as needed;
+ * caller should check EG(exception) on return. */
+static void
+cedar_evaluate_request(cedar_policy_store_t *store, zval *params,
+                       const php_cedar_str_t *p_type,
+                       const php_cedar_str_t *p_id,
+                       const php_cedar_str_t *a_type,
+                       const php_cedar_str_t *a_id,
+                       const php_cedar_str_t *r_type,
+                       const php_cedar_str_t *r_id,
+                       zval *group_parents,
+                       bool include_principal,
+                       zval *return_value)
+{
+    php_cedar_pool_t       *eval_pool;
+    php_cedar_log_t         eval_log;
+    php_cedar_eval_ctx_t   *eval_ctx;
+    zval                    permit_ids, forbid_ids, errors;
+    zend_string            *pid_key;
+    php_cedar_policy_set_t *ps;
+    zval                   *zid;
+
+    /* policyStoreId is a required AVP key; reject non-string values. */
+    zid = zend_hash_str_find(Z_ARRVAL_P(params),
+                             "policyStoreId", sizeof("policyStoreId") - 1);
+    if (!zid || Z_TYPE_P(zid) != IS_STRING) {
+        zend_throw_error(NULL, "'policyStoreId' (string) is required");
         return;
     }
-    if (policy_id) {
-        zval entry;
-        array_init(&entry);
-        add_assoc_str(&entry, "policyId", zend_string_copy(policy_id));
-        add_next_index_zval(determining, &entry);
+    if (!store->id || !zend_string_equals(Z_STR_P(zid), store->id)) {
+        zend_throw_exception_ex(cedar_ce_ResourceNotFoundException, 0,
+            "policyStoreId '%s' does not match the bound PolicyStore",
+            Z_STRVAL_P(zid));
+        return;
+    }
+
+    memset(&eval_log, 0, sizeof(eval_log));
+    eval_log.level = 0;
+    eval_pool = php_cedar_pool_create(&eval_log);
+    if (!eval_pool) {
+        zend_throw_exception_ex(cedar_ce_EvaluationException, 0,
+            "failed to allocate evaluation pool");
+        return;
+    }
+    eval_ctx = php_cedar_eval_ctx_create(eval_pool);
+    if (!eval_ctx) {
+        php_cedar_pool_destroy(eval_pool);
+        zend_throw_exception_ex(cedar_ce_EvaluationException, 0,
+            "failed to create evaluation context");
+        return;
+    }
+
+    php_cedar_eval_ctx_set_principal(eval_ctx,
+        (php_cedar_str_t *) p_type, (php_cedar_str_t *) p_id);
+    php_cedar_eval_ctx_set_action(eval_ctx,
+        (php_cedar_str_t *) a_type, (php_cedar_str_t *) a_id);
+    php_cedar_eval_ctx_set_resource(eval_ctx,
+        (php_cedar_str_t *) r_type, (php_cedar_str_t *) r_id);
+
+    array_init(&permit_ids);
+    array_init(&forbid_ids);
+    array_init(&errors);
+
+    cedar_apply_context_map(eval_ctx, params, &errors);
+    cedar_apply_entities(eval_ctx, params, &errors,
+                         p_type, p_id, a_type, a_id, r_type, r_id);
+
+    /* Token-derived group parents (identitySource.groupIdsClaim). */
+    if (group_parents && Z_TYPE_P(group_parents) == IS_ARRAY) {
+        zval *entry;
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(group_parents), entry) {
+            php_cedar_str_t gt, gi;
+            if (cedar_pick_entity_ids(entry,
+                    "entityType", sizeof("entityType") - 1,
+                    "entityId",   sizeof("entityId")   - 1,
+                    &gt, &gi) == PHP_CEDAR_OK) {
+                php_cedar_eval_ctx_add_principal_parent(eval_ctx, &gt, &gi);
+            }
+        } ZEND_HASH_FOREACH_END();
+    }
+
+    ZEND_HASH_FOREACH_STR_KEY_PTR(&store->policies, pid_key, ps) {
+        cedar_eval_one_bundle(pid_key, ps, eval_ctx, &eval_log,
+                              &permit_ids, &forbid_ids);
+    } ZEND_HASH_FOREACH_END();
+
+    php_cedar_pool_destroy(eval_pool);
+
+    cedar_finalize_response(return_value, &permit_ids, &forbid_ids, &errors);
+
+    if (include_principal) {
+        zval principal_zv;
+        array_init(&principal_zv);
+        add_assoc_stringl(&principal_zv, "entityType",
+            (char *) p_type->data, p_type->len);
+        add_assoc_stringl(&principal_zv, "entityId",
+            (char *) p_id->data, p_id->len);
+        add_assoc_zval(return_value, "principal", &principal_zv);
     }
 }
 
@@ -864,16 +1024,8 @@ PHP_METHOD(Cedar_AuthorizationClient, isAuthorized)
     cedar_authz_client_t *intern;
     cedar_policy_store_t *store;
     zval                 *params;
-    zval                 *zid, *zp, *za, *zr;
+    zval                 *zp, *za, *zr;
     php_cedar_str_t       p_type, p_id, a_type, a_id, r_type, r_id;
-    php_cedar_pool_t     *eval_pool;
-    php_cedar_log_t       eval_log;
-    php_cedar_eval_ctx_t *eval_ctx;
-    int                   has_allow = 0;
-    int                   has_forbid = 0;
-    zval                  determining, errors;
-    zend_string          *pid_key;
-    php_cedar_policy_set_t *ps;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_ARRAY(params)
@@ -886,24 +1038,6 @@ PHP_METHOD(Cedar_AuthorizationClient, isAuthorized)
         return;
     }
     store = Z_CEDAR_POLICY_STORE_P(&intern->policy_store);
-
-    /* policyStoreId is a required AVP key; reject non-string values. */
-    zid = zend_hash_str_find(Z_ARRVAL_P(params),
-                             "policyStoreId", sizeof("policyStoreId") - 1);
-    if (!zid || Z_TYPE_P(zid) != IS_STRING) {
-        zend_throw_error(NULL,
-            "isAuthorized(): 'policyStoreId' (string) is required");
-        return;
-    }
-    if (!store->id
-        || Z_STRLEN_P(zid) != ZSTR_LEN(store->id)
-        || memcmp(Z_STRVAL_P(zid), ZSTR_VAL(store->id),
-                  ZSTR_LEN(store->id)) != 0) {
-        zend_throw_exception_ex(cedar_ce_ResourceNotFoundException, 0,
-            "policyStoreId '%s' does not match the bound PolicyStore",
-            Z_STRVAL_P(zid));
-        return;
-    }
 
     zp = zend_hash_str_find(Z_ARRVAL_P(params),
                             "principal", sizeof("principal") - 1);
@@ -927,64 +1061,188 @@ PHP_METHOD(Cedar_AuthorizationClient, isAuthorized)
         return;
     }
 
-    /* Request-scoped evaluation pool and context. */
-    memset(&eval_log, 0, sizeof(eval_log));
-    eval_log.level = 0;
-    eval_pool = php_cedar_pool_create(&eval_log);
-    if (!eval_pool) {
-        zend_throw_exception_ex(cedar_ce_EvaluationException, 0,
-            "failed to allocate evaluation pool");
-        return;
-    }
-    eval_ctx = php_cedar_eval_ctx_create(eval_pool);
-    if (!eval_ctx) {
-        php_cedar_pool_destroy(eval_pool);
-        zend_throw_exception_ex(cedar_ce_EvaluationException, 0,
-            "failed to create evaluation context");
-        return;
-    }
-
-    php_cedar_eval_ctx_set_principal(eval_ctx, &p_type, &p_id);
-    php_cedar_eval_ctx_set_action(eval_ctx,    &a_type, &a_id);
-    php_cedar_eval_ctx_set_resource(eval_ctx,  &r_type, &r_id);
-
-    array_init(&determining);
-    array_init(&errors);
-
-    /* Optional inputs: context.contextMap and entities.entityList.
-     * The caller is responsible for flattening transitive parents
-     * (per Cedar semantics) — we forward each parent verbatim. */
-    cedar_apply_context_map(eval_ctx, params, &errors);
-    cedar_apply_entities(eval_ctx, params, &errors,
-                         &p_type, &p_id, &r_type, &r_id);
-
-    /* Evaluate every policy_set in the store and combine the results. */
-    ZEND_HASH_FOREACH_STR_KEY_PTR(&store->policies, pid_key, ps) {
-        cedar_eval_one_bundle(pid_key, ps, eval_ctx, &eval_log,
-                              &has_allow, &has_forbid, &determining);
-    } ZEND_HASH_FOREACH_END();
-
-    php_cedar_pool_destroy(eval_pool);
-
-    cedar_finalize_response(return_value, has_allow, has_forbid,
-                            &determining, &errors);
+    cedar_evaluate_request(store, params,
+                           &p_type, &p_id, &a_type, &a_id, &r_type, &r_id,
+                           NULL,  /* no group parents */
+                           false, /* do not include principal in response */
+                           return_value);
 }
 
-/* isAuthorizedWithToken defers JWT verification to the caller, so the
- * extension itself does not implement it yet. Surface a clear runtime
- * error pointing users to isAuthorized() with an extracted principal. */
+/* Locate a string-valued claim inside a payload array. */
+static int
+cedar_payload_str(zval *payload, const char *claim, size_t claim_len,
+                  php_cedar_str_t *out)
+{
+    zval *v;
+    if (Z_TYPE_P(payload) != IS_ARRAY) return PHP_CEDAR_ERROR;
+    v = zend_hash_str_find(Z_ARRVAL_P(payload), claim, claim_len);
+    if (!v || Z_TYPE_P(v) != IS_STRING) return PHP_CEDAR_ERROR;
+    out->data = (unsigned char *) Z_STRVAL_P(v);
+    out->len  = Z_STRLEN_P(v);
+    return PHP_CEDAR_OK;
+}
+
+/* Convert payload[claim] (expected to be a list of strings) into an
+ * array of {entityType, entityId} entries usable as principal parents. */
+static int
+cedar_build_group_parents(zval *payload, const char *claim, size_t claim_len,
+                          zval *group_type_zv, zval *out_parents)
+{
+    zval *list, *gid;
+
+    if (Z_TYPE_P(payload) != IS_ARRAY) return PHP_CEDAR_ERROR;
+    list = zend_hash_str_find(Z_ARRVAL_P(payload), claim, claim_len);
+    if (!list || Z_TYPE_P(list) != IS_ARRAY) {
+        /* Claim absent or not a list: treat as no groups (not an error). */
+        return PHP_CEDAR_OK;
+    }
+    if (!group_type_zv || Z_TYPE_P(group_type_zv) != IS_STRING) {
+        return PHP_CEDAR_ERROR;
+    }
+
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(list), gid) {
+        zval entry;
+        if (Z_TYPE_P(gid) != IS_STRING) continue;
+        array_init(&entry);
+        add_assoc_str(&entry, "entityType", zend_string_copy(Z_STR_P(group_type_zv)));
+        add_assoc_str(&entry, "entityId",   zend_string_copy(Z_STR_P(gid)));
+        add_next_index_zval(out_parents, &entry);
+    } ZEND_HASH_FOREACH_END();
+    return PHP_CEDAR_OK;
+}
+
 PHP_METHOD(Cedar_AuthorizationClient, isAuthorizedWithToken)
 {
-    zval *params;
+    cedar_authz_client_t *intern;
+    cedar_policy_store_t *store;
+    zval                 *params, *za, *zr;
+    zval                 *id_tok, *ac_tok, *payload;
+    HashTable            *id_src;
+    zval                 *p_type_zv, *p_claim_zv, *g_type_zv, *g_claim_zv;
+    const char           *p_claim_name;
+    size_t                p_claim_len;
+    php_cedar_str_t       p_type, p_id, a_type, a_id, r_type, r_id;
+    zval                  group_parents;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_ARRAY(params)
     ZEND_PARSE_PARAMETERS_END();
-    (void) params;
 
-    zend_throw_exception_ex(spl_ce_RuntimeException, 0,
-        "isAuthorizedWithToken() is not implemented yet; "
-        "verify JWT externally and call isAuthorized() with the extracted principal");
+    intern = Z_CEDAR_AUTHZ_CLIENT_P(ZEND_THIS);
+    if (Z_TYPE(intern->policy_store) != IS_OBJECT) {
+        zend_throw_exception_ex(cedar_ce_EvaluationException, 0,
+            "AuthorizationClient is not bound to a PolicyStore");
+        return;
+    }
+    store = Z_CEDAR_POLICY_STORE_P(&intern->policy_store);
+
+    /* identitySource must have been supplied to the constructor. */
+    if (Z_TYPE(intern->identity_source) != IS_ARRAY) {
+        zend_throw_error(NULL,
+            "isAuthorizedWithToken(): AuthorizationClient was not "
+            "constructed with an 'identitySource' option");
+        return;
+    }
+    id_src = Z_ARRVAL(intern->identity_source);
+
+    /* Reject 'principal' from the caller — it is derived from the token. */
+    if (zend_hash_str_exists(Z_ARRVAL_P(params),
+            "principal", sizeof("principal") - 1)) {
+        zend_throw_error(NULL,
+            "isAuthorizedWithToken(): 'principal' must not be supplied; "
+            "it is derived from the token");
+        return;
+    }
+
+    /* At least one of identityToken / accessToken (verified payload). */
+    id_tok = zend_hash_str_find(Z_ARRVAL_P(params),
+                                "identityToken", sizeof("identityToken") - 1);
+    ac_tok = zend_hash_str_find(Z_ARRVAL_P(params),
+                                "accessToken",   sizeof("accessToken")   - 1);
+    if (id_tok && Z_TYPE_P(id_tok) == IS_ARRAY) {
+        payload = id_tok;
+    } else if (ac_tok && Z_TYPE_P(ac_tok) == IS_ARRAY) {
+        payload = ac_tok;
+    } else {
+        zend_throw_error(NULL,
+            "isAuthorizedWithToken(): 'identityToken' or 'accessToken' "
+            "(verified claims array) is required");
+        return;
+    }
+
+    /* Resolve principalEntityType + principalIdClaim (default "sub"). */
+    p_type_zv  = zend_hash_str_find(id_src,
+        "principalEntityType", sizeof("principalEntityType") - 1);
+    p_claim_zv = zend_hash_str_find(id_src,
+        "principalIdClaim",    sizeof("principalIdClaim")    - 1);
+    if (!p_type_zv || Z_TYPE_P(p_type_zv) != IS_STRING) {
+        zend_throw_error(NULL,
+            "isAuthorizedWithToken(): identitySource.principalEntityType "
+            "(string) is required");
+        return;
+    }
+    if (p_claim_zv && Z_TYPE_P(p_claim_zv) == IS_STRING) {
+        p_claim_name = Z_STRVAL_P(p_claim_zv);
+        p_claim_len  = Z_STRLEN_P(p_claim_zv);
+    } else {
+        p_claim_name = "sub";
+        p_claim_len  = sizeof("sub") - 1;
+    }
+
+    p_type.data = (unsigned char *) Z_STRVAL_P(p_type_zv);
+    p_type.len  = Z_STRLEN_P(p_type_zv);
+
+    if (cedar_payload_str(payload, p_claim_name, p_claim_len, &p_id)
+        != PHP_CEDAR_OK) {
+        zend_throw_error(NULL,
+            "isAuthorizedWithToken(): claim '%s' is missing or not a "
+            "string in the supplied token payload", p_claim_name);
+        return;
+    }
+
+    /* action / resource: same shape as isAuthorized(). */
+    za = zend_hash_str_find(Z_ARRVAL_P(params),
+                            "action",   sizeof("action")   - 1);
+    zr = zend_hash_str_find(Z_ARRVAL_P(params),
+                            "resource", sizeof("resource") - 1);
+    if (cedar_pick_entity_ids(za, "actionType", sizeof("actionType") - 1,
+                                  "actionId",   sizeof("actionId")   - 1,
+                              &a_type, &a_id) != PHP_CEDAR_OK
+     || cedar_pick_entity_ids(zr, "entityType", sizeof("entityType") - 1,
+                                  "entityId",   sizeof("entityId")   - 1,
+                              &r_type, &r_id) != PHP_CEDAR_OK) {
+        zend_throw_error(NULL,
+            "isAuthorizedWithToken(): action must be "
+            "{actionType, actionId}, resource must be "
+            "{entityType, entityId}");
+        return;
+    }
+
+    /* Build group parents from identitySource.groupIdsClaim, if any. */
+    array_init(&group_parents);
+    g_type_zv  = zend_hash_str_find(id_src,
+        "groupEntityType", sizeof("groupEntityType") - 1);
+    g_claim_zv = zend_hash_str_find(id_src,
+        "groupIdsClaim",   sizeof("groupIdsClaim")   - 1);
+    if (g_type_zv && Z_TYPE_P(g_type_zv) == IS_STRING
+     && g_claim_zv && Z_TYPE_P(g_claim_zv) == IS_STRING) {
+        if (cedar_build_group_parents(payload,
+                Z_STRVAL_P(g_claim_zv), Z_STRLEN_P(g_claim_zv),
+                g_type_zv, &group_parents) != PHP_CEDAR_OK) {
+            zval_ptr_dtor(&group_parents);
+            zend_throw_error(NULL,
+                "isAuthorizedWithToken(): failed to map group claims");
+            return;
+        }
+    }
+
+    cedar_evaluate_request(store, params,
+                           &p_type, &p_id, &a_type, &a_id, &r_type, &r_id,
+                           &group_parents,
+                           true, /* include extracted principal in response */
+                           return_value);
+
+    zval_ptr_dtor(&group_parents);
 }
 
 /* ============================================================

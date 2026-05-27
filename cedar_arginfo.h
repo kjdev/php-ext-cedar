@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: c0a768b1135221393bb19d04c3001606665fb33e */
+ * Stub hash: 59998e42413b019102dc8e5d7c6bc26b7f00c56c */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Cedar_PolicyStore___construct, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, policyStoreId, IS_STRING, 1, "null")
@@ -23,6 +23,7 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Cedar_AuthorizationClient___construct, 0, 0, 1)
 	ZEND_ARG_OBJ_INFO(0, policyStore, Cedar\\PolicyStore, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, options, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Cedar_AuthorizationClient_isAuthorized, 0, 1, IS_ARRAY, 0)

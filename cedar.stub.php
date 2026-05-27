@@ -32,10 +32,17 @@ namespace Cedar
     /**
      * Local evaluation client compatible with AVP's
      * Aws\VerifiedPermissions\VerifiedPermissionsClient.
+     *
+     * The optional $options array recognizes:
+     *   - 'identitySource' (array): claim-mapper config used by
+     *     isAuthorizedWithToken(). Keys: principalEntityType (string,
+     *     required), principalIdClaim (string, default "sub"),
+     *     groupEntityType (string, optional), groupIdsClaim (string,
+     *     optional).
      */
     final class AuthorizationClient
     {
-        public function __construct(PolicyStore $policyStore) {}
+        public function __construct(PolicyStore $policyStore, array $options = []) {}
 
         public function isAuthorized(array $params): array {}
 
