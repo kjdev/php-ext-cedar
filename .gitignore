@@ -1,0 +1,44 @@
+# phpize / autotools build artifacts
+*.dep
+*.la
+*.lo
+*.loT
+*.o
+.deps/
+.libs/
+.libtool
+autom4te.cache/
+build/
+config.h
+config.h.in
+config.h.in~
+config.log
+config.nice
+config.status
+configure
+configure~
+configure.ac
+configure.in
+libtool
+ltmain.sh
+Makefile
+Makefile.fragments
+Makefile.global
+Makefile.objects
+mkinstalldirs
+modules/
+run-tests.php
+acinclude.m4
+aclocal.m4
+
+# gen_stub.php artifacts
+cedar_legacy_arginfo.h
+
+# test artifacts
+tests/**/*.diff
+tests/**/*.exp
+tests/**/*.log
+tests/**/*.out
+tests/**/*.php
+tests/**/*.sh
+tests/**/*.mem
