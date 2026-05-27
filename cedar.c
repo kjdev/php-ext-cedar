@@ -328,6 +328,491 @@ cedar_pick_entity_ids(zval *ent,
     return PHP_CEDAR_OK;
 }
 
+/* ============================================================
+ * AttributeValue (AVP Union) -> php_cedar evaluator helpers
+ * ============================================================ */
+
+typedef enum {
+    CEDAR_TARGET_PRINCIPAL,
+    CEDAR_TARGET_ACTION,
+    CEDAR_TARGET_RESOURCE,
+    CEDAR_TARGET_CONTEXT
+} cedar_attr_target_t;
+
+/* AVP's AttributeValue is a one-of union encoded as a single-key
+ * associative array, e.g. ['string' => 'x'] or ['set' => [...]].
+ * Resolve that wrapper and return the kind string + inner zval. */
+static int
+cedar_resolve_attr_union(zval *attr_val,
+                         zend_string **kind_out, zval **inner_out)
+{
+    HashTable   *ht;
+    zend_string *key;
+    zval        *val;
+
+    if (attr_val == NULL || Z_TYPE_P(attr_val) != IS_ARRAY) {
+        return PHP_CEDAR_ERROR;
+    }
+    ht = Z_ARRVAL_P(attr_val);
+    if (zend_hash_num_elements(ht) != 1) {
+        return PHP_CEDAR_ERROR;
+    }
+    ZEND_HASH_FOREACH_STR_KEY_VAL(ht, key, val) {
+        if (!key) {
+            return PHP_CEDAR_ERROR;
+        }
+        *kind_out  = key;
+        *inner_out = val;
+        return PHP_CEDAR_OK;
+    } ZEND_HASH_FOREACH_END();
+    return PHP_CEDAR_ERROR;
+}
+
+/* Build a php_cedar_str_t view over a zval string (no copy). */
+static int
+cedar_zval_to_cedar_str(zval *zv, php_cedar_str_t *out)
+{
+    if (Z_TYPE_P(zv) != IS_STRING) {
+        return PHP_CEDAR_ERROR;
+    }
+    out->data = (unsigned char *) Z_STRVAL_P(zv);
+    out->len  = Z_STRLEN_P(zv);
+    return PHP_CEDAR_OK;
+}
+
+/* Forward declarations for the mutually recursive helpers. */
+static int cedar_apply_top_attr(php_cedar_eval_ctx_t *ctx,
+                                cedar_attr_target_t tgt,
+                                php_cedar_str_t *name, zval *attr_val);
+static int cedar_apply_record_attr(php_cedar_record_t *rec,
+                                   php_cedar_str_t *name, zval *attr_val);
+static int cedar_apply_set_element(php_cedar_set_t *set, zval *attr_val);
+
+/* Populate a record from {key => AttributeValue, ...}. */
+static int
+cedar_apply_record_children(php_cedar_record_t *rec, zval *inner)
+{
+    HashTable   *ht;
+    zend_string *key;
+    zval        *val;
+
+    if (Z_TYPE_P(inner) != IS_ARRAY) {
+        return PHP_CEDAR_ERROR;
+    }
+    ht = Z_ARRVAL_P(inner);
+    ZEND_HASH_FOREACH_STR_KEY_VAL(ht, key, val) {
+        php_cedar_str_t name;
+        if (!key) {
+            return PHP_CEDAR_ERROR;
+        }
+        name.data = (unsigned char *) ZSTR_VAL(key);
+        name.len  = ZSTR_LEN(key);
+        if (cedar_apply_record_attr(rec, &name, val) != PHP_CEDAR_OK) {
+            return PHP_CEDAR_ERROR;
+        }
+    } ZEND_HASH_FOREACH_END();
+    return PHP_CEDAR_OK;
+}
+
+/* Populate a set from [AttributeValue, ...]. */
+static int
+cedar_apply_set_children(php_cedar_set_t *set, zval *inner)
+{
+    HashTable *ht;
+    zval      *val;
+
+    if (Z_TYPE_P(inner) != IS_ARRAY) {
+        return PHP_CEDAR_ERROR;
+    }
+    ht = Z_ARRVAL_P(inner);
+    ZEND_HASH_FOREACH_VAL(ht, val) {
+        if (cedar_apply_set_element(set, val) != PHP_CEDAR_OK) {
+            return PHP_CEDAR_ERROR;
+        }
+    } ZEND_HASH_FOREACH_END();
+    return PHP_CEDAR_OK;
+}
+
+/* Apply an AttributeValue as a top-level eval_ctx attribute. */
+static int
+cedar_apply_top_attr(php_cedar_eval_ctx_t *ctx, cedar_attr_target_t tgt,
+                     php_cedar_str_t *name, zval *attr_val)
+{
+    zend_string *kind;
+    zval        *inner;
+    php_cedar_str_t v;
+
+    if (cedar_resolve_attr_union(attr_val, &kind, &inner) != PHP_CEDAR_OK) {
+        return PHP_CEDAR_ERROR;
+    }
+
+    if (zend_string_equals_literal(kind, "string")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr(ctx, name, &v);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr   (ctx, name, &v);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr (ctx, name, &v);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr  (ctx, name, &v);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "long")) {
+        int64_t lv;
+        if (Z_TYPE_P(inner) != IS_LONG) return PHP_CEDAR_ERROR;
+        lv = (int64_t) Z_LVAL_P(inner);
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_long(ctx, name, lv);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_long   (ctx, name, lv);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_long (ctx, name, lv);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_long  (ctx, name, lv);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "boolean")) {
+        php_cedar_flag_t b;
+        if (Z_TYPE_P(inner) != IS_TRUE && Z_TYPE_P(inner) != IS_FALSE) {
+            return PHP_CEDAR_ERROR;
+        }
+        b = (Z_TYPE_P(inner) == IS_TRUE) ? 1 : 0;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_bool(ctx, name, b);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_bool   (ctx, name, b);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_bool (ctx, name, b);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_bool  (ctx, name, b);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "ipaddr")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_ip(ctx, name, &v);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_ip   (ctx, name, &v);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_ip (ctx, name, &v);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_ip  (ctx, name, &v);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "decimal")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_decimal(ctx, name, &v);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_decimal   (ctx, name, &v);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_decimal (ctx, name, &v);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_decimal  (ctx, name, &v);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "entityIdentifier")) {
+        php_cedar_str_t et, eid;
+        if (cedar_pick_entity_ids(inner,
+                "entityType", sizeof("entityType") - 1,
+                "entityId",   sizeof("entityId")   - 1,
+                &et, &eid) != PHP_CEDAR_OK) {
+            return PHP_CEDAR_ERROR;
+        }
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_entity(ctx, name, &et, &eid);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_entity   (ctx, name, &et, &eid);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_entity (ctx, name, &et, &eid);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_entity  (ctx, name, &et, &eid);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "record")) {
+        php_cedar_record_t *rec = NULL;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: rec = php_cedar_eval_ctx_add_principal_attr_record(ctx, name); break;
+        case CEDAR_TARGET_ACTION:    rec = php_cedar_eval_ctx_add_action_attr_record   (ctx, name); break;
+        case CEDAR_TARGET_RESOURCE:  rec = php_cedar_eval_ctx_add_resource_attr_record (ctx, name); break;
+        case CEDAR_TARGET_CONTEXT:   rec = php_cedar_eval_ctx_add_context_attr_record  (ctx, name); break;
+        }
+        if (rec == NULL) return PHP_CEDAR_ERROR;
+        return cedar_apply_record_children(rec, inner);
+    }
+    if (zend_string_equals_literal(kind, "set")) {
+        php_cedar_set_t *set = NULL;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: set = php_cedar_eval_ctx_add_principal_attr_set(ctx, name); break;
+        case CEDAR_TARGET_ACTION:    set = php_cedar_eval_ctx_add_action_attr_set   (ctx, name); break;
+        case CEDAR_TARGET_RESOURCE:  set = php_cedar_eval_ctx_add_resource_attr_set (ctx, name); break;
+        case CEDAR_TARGET_CONTEXT:   set = php_cedar_eval_ctx_add_context_attr_set  (ctx, name); break;
+        }
+        if (set == NULL) return PHP_CEDAR_ERROR;
+        return cedar_apply_set_children(set, inner);
+    }
+    /* datetime / duration are not supported (upstream gap). */
+    return PHP_CEDAR_ERROR;
+}
+
+/* Apply an AttributeValue as a record member. */
+static int
+cedar_apply_record_attr(php_cedar_record_t *rec,
+                        php_cedar_str_t *name, zval *attr_val)
+{
+    zend_string *kind;
+    zval        *inner;
+    php_cedar_str_t v;
+
+    if (cedar_resolve_attr_union(attr_val, &kind, &inner) != PHP_CEDAR_OK) {
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "string")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_record_add_str(rec, name, &v);
+    }
+    if (zend_string_equals_literal(kind, "long")) {
+        int64_t lv;
+        if (Z_TYPE_P(inner) != IS_LONG) return PHP_CEDAR_ERROR;
+        lv = (int64_t) Z_LVAL_P(inner);
+        return php_cedar_record_add_long(rec, name, lv);
+    }
+    if (zend_string_equals_literal(kind, "boolean")) {
+        if (Z_TYPE_P(inner) != IS_TRUE && Z_TYPE_P(inner) != IS_FALSE) {
+            return PHP_CEDAR_ERROR;
+        }
+        return php_cedar_record_add_bool(rec, name, (Z_TYPE_P(inner) == IS_TRUE) ? 1 : 0);
+    }
+    if (zend_string_equals_literal(kind, "ipaddr")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_record_add_ip(rec, name, &v);
+    }
+    if (zend_string_equals_literal(kind, "decimal")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_record_add_decimal(rec, name, &v);
+    }
+    if (zend_string_equals_literal(kind, "entityIdentifier")) {
+        php_cedar_str_t et, eid;
+        if (cedar_pick_entity_ids(inner,
+                "entityType", sizeof("entityType") - 1,
+                "entityId",   sizeof("entityId")   - 1,
+                &et, &eid) != PHP_CEDAR_OK) {
+            return PHP_CEDAR_ERROR;
+        }
+        return php_cedar_record_add_entity(rec, name, &et, &eid);
+    }
+    if (zend_string_equals_literal(kind, "record")) {
+        php_cedar_record_t *child = php_cedar_record_add_record(rec, name);
+        if (!child) return PHP_CEDAR_ERROR;
+        return cedar_apply_record_children(child, inner);
+    }
+    if (zend_string_equals_literal(kind, "set")) {
+        php_cedar_set_t *child = php_cedar_record_add_set(rec, name);
+        if (!child) return PHP_CEDAR_ERROR;
+        return cedar_apply_set_children(child, inner);
+    }
+    return PHP_CEDAR_ERROR;
+}
+
+/* Apply an AttributeValue as a set element. */
+static int
+cedar_apply_set_element(php_cedar_set_t *set, zval *attr_val)
+{
+    zend_string *kind;
+    zval        *inner;
+    php_cedar_str_t v;
+
+    if (cedar_resolve_attr_union(attr_val, &kind, &inner) != PHP_CEDAR_OK) {
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "string")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_set_add_str(set, &v);
+    }
+    if (zend_string_equals_literal(kind, "long")) {
+        int64_t lv;
+        if (Z_TYPE_P(inner) != IS_LONG) return PHP_CEDAR_ERROR;
+        lv = (int64_t) Z_LVAL_P(inner);
+        return php_cedar_set_add_long(set, lv);
+    }
+    if (zend_string_equals_literal(kind, "boolean")) {
+        if (Z_TYPE_P(inner) != IS_TRUE && Z_TYPE_P(inner) != IS_FALSE) {
+            return PHP_CEDAR_ERROR;
+        }
+        return php_cedar_set_add_bool(set, (Z_TYPE_P(inner) == IS_TRUE) ? 1 : 0);
+    }
+    if (zend_string_equals_literal(kind, "ipaddr")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_set_add_ip(set, &v);
+    }
+    if (zend_string_equals_literal(kind, "decimal")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_set_add_decimal(set, &v);
+    }
+    if (zend_string_equals_literal(kind, "entityIdentifier")) {
+        php_cedar_str_t et, eid;
+        if (cedar_pick_entity_ids(inner,
+                "entityType", sizeof("entityType") - 1,
+                "entityId",   sizeof("entityId")   - 1,
+                &et, &eid) != PHP_CEDAR_OK) {
+            return PHP_CEDAR_ERROR;
+        }
+        return php_cedar_set_add_entity(set, &et, &eid);
+    }
+    if (zend_string_equals_literal(kind, "set")) {
+        php_cedar_set_t *child = php_cedar_set_add_set(set);
+        if (!child) return PHP_CEDAR_ERROR;
+        return cedar_apply_set_children(child, inner);
+    }
+    if (zend_string_equals_literal(kind, "record")) {
+        php_cedar_record_t *child = php_cedar_set_add_record(set);
+        if (!child) return PHP_CEDAR_ERROR;
+        return cedar_apply_record_children(child, inner);
+    }
+    return PHP_CEDAR_ERROR;
+}
+
+/* Append {errorDescription: msg} to the errors array. */
+static void
+cedar_push_error(zval *errors, const char *fmt, ...)
+{
+    char    buf[512];
+    va_list ap;
+    zval    entry;
+
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    array_init(&entry);
+    add_assoc_string(&entry, "errorDescription", buf);
+    add_next_index_zval(errors, &entry);
+}
+
+/* Walk context.contextMap and push each entry into eval_ctx. */
+static void
+cedar_apply_context_map(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors)
+{
+    zval        *zv_ctx, *zv_map, *val;
+    zend_string *key;
+
+    zv_ctx = zend_hash_str_find(Z_ARRVAL_P(params),
+                                "context", sizeof("context") - 1);
+    if (!zv_ctx || Z_TYPE_P(zv_ctx) != IS_ARRAY) return;
+    zv_map = zend_hash_str_find(Z_ARRVAL_P(zv_ctx),
+                                "contextMap", sizeof("contextMap") - 1);
+    if (!zv_map || Z_TYPE_P(zv_map) != IS_ARRAY) return;
+
+    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(zv_map), key, val) {
+        php_cedar_str_t name;
+        if (!key) continue;
+        name.data = (unsigned char *) ZSTR_VAL(key);
+        name.len  = ZSTR_LEN(key);
+        if (cedar_apply_top_attr(ctx, CEDAR_TARGET_CONTEXT, &name, val)
+            != PHP_CEDAR_OK) {
+            cedar_push_error(errors,
+                "unsupported or malformed AttributeValue for context.%s",
+                ZSTR_VAL(key));
+        }
+    } ZEND_HASH_FOREACH_END();
+}
+
+/* True iff two php_cedar_str_t hold the same bytes. */
+static int
+cedar_str_equal(const php_cedar_str_t *a, const php_cedar_str_t *b)
+{
+    return a->len == b->len && memcmp(a->data, b->data, a->len) == 0;
+}
+
+/* Walk entities.entityList. For each entry whose identifier matches
+ * the request principal/resource, inject its attributes; parents are
+ * always forwarded to the corresponding add_*_parent call. */
+static void
+cedar_apply_entities(php_cedar_eval_ctx_t *ctx, zval *params, zval *errors,
+                     const php_cedar_str_t *p_type, const php_cedar_str_t *p_id,
+                     const php_cedar_str_t *r_type, const php_cedar_str_t *r_id)
+{
+    zval *zv_entities, *zv_list, *entity;
+
+    zv_entities = zend_hash_str_find(Z_ARRVAL_P(params),
+                                     "entities", sizeof("entities") - 1);
+    if (!zv_entities || Z_TYPE_P(zv_entities) != IS_ARRAY) return;
+    zv_list = zend_hash_str_find(Z_ARRVAL_P(zv_entities),
+                                 "entityList", sizeof("entityList") - 1);
+    if (!zv_list || Z_TYPE_P(zv_list) != IS_ARRAY) return;
+
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(zv_list), entity) {
+        zval               *zv_id_obj, *zv_attrs, *zv_parents;
+        php_cedar_str_t     e_type, e_id;
+        int                 match_principal, match_resource, matched_subject;
+
+        if (Z_TYPE_P(entity) != IS_ARRAY) continue;
+        zv_id_obj = zend_hash_str_find(Z_ARRVAL_P(entity),
+                                       "identifier", sizeof("identifier") - 1);
+        if (!zv_id_obj || cedar_pick_entity_ids(zv_id_obj,
+                "entityType", sizeof("entityType") - 1,
+                "entityId",   sizeof("entityId")   - 1,
+                &e_type, &e_id) != PHP_CEDAR_OK) {
+            continue;
+        }
+
+        /* The same identifier may be both principal and resource; apply
+         * attributes and parents to every target it matches. */
+        match_principal = cedar_str_equal(&e_type, p_type) && cedar_str_equal(&e_id, p_id);
+        match_resource  = cedar_str_equal(&e_type, r_type) && cedar_str_equal(&e_id, r_id);
+        matched_subject = match_principal || match_resource;
+
+        if (matched_subject) {
+            zv_attrs = zend_hash_str_find(Z_ARRVAL_P(entity),
+                                          "attributes",
+                                          sizeof("attributes") - 1);
+            if (zv_attrs && Z_TYPE_P(zv_attrs) == IS_ARRAY) {
+                zend_string *key;
+                zval        *val;
+                ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(zv_attrs), key, val) {
+                    php_cedar_str_t name;
+                    int             arc = PHP_CEDAR_OK;
+                    if (!key) continue;
+                    name.data = (unsigned char *) ZSTR_VAL(key);
+                    name.len  = ZSTR_LEN(key);
+                    if (match_principal) {
+                        arc = cedar_apply_top_attr(ctx, CEDAR_TARGET_PRINCIPAL,
+                                                   &name, val);
+                    }
+                    if (arc == PHP_CEDAR_OK && match_resource) {
+                        arc = cedar_apply_top_attr(ctx, CEDAR_TARGET_RESOURCE,
+                                                   &name, val);
+                    }
+                    if (arc != PHP_CEDAR_OK) {
+                        cedar_push_error(errors,
+                            "unsupported or malformed AttributeValue for "
+                            "%.*s::\"%.*s\".%s",
+                            (int) e_type.len, (const char *) e_type.data,
+                            (int) e_id.len,   (const char *) e_id.data,
+                            ZSTR_VAL(key));
+                    }
+                } ZEND_HASH_FOREACH_END();
+            }
+        }
+
+        zv_parents = zend_hash_str_find(Z_ARRVAL_P(entity),
+                                        "parents", sizeof("parents") - 1);
+        if (zv_parents && Z_TYPE_P(zv_parents) == IS_ARRAY) {
+            zval *parent;
+            ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(zv_parents), parent) {
+                php_cedar_str_t pt, pi;
+                if (cedar_pick_entity_ids(parent,
+                        "entityType", sizeof("entityType") - 1,
+                        "entityId",   sizeof("entityId")   - 1,
+                        &pt, &pi) != PHP_CEDAR_OK) {
+                    continue;
+                }
+                if (!matched_subject) {
+                    /* Entities other than principal/resource have no
+                     * place to attach parents in the current eval_ctx
+                     * shape; skip silently. */
+                    continue;
+                }
+                if (match_principal) {
+                    php_cedar_eval_ctx_add_principal_parent(ctx, &pt, &pi);
+                }
+                if (match_resource) {
+                    php_cedar_eval_ctx_add_resource_parent(ctx, &pt, &pi);
+                }
+            } ZEND_HASH_FOREACH_END();
+        }
+    } ZEND_HASH_FOREACH_END();
+}
+
 /* Populate return_value with the AVP-compatible response shape. */
 static void
 cedar_finalize_response(zval *return_value,
@@ -463,11 +948,15 @@ PHP_METHOD(Cedar_AuthorizationClient, isAuthorized)
     php_cedar_eval_ctx_set_action(eval_ctx,    &a_type, &a_id);
     php_cedar_eval_ctx_set_resource(eval_ctx,  &r_type, &r_id);
 
-    /* TODO (M4 follow-up): context.contextMap, entities.entityList,
-     * AttributeValue Union beyond scalars, transitive parent resolution. */
-
     array_init(&determining);
     array_init(&errors);
+
+    /* Optional inputs: context.contextMap and entities.entityList.
+     * The caller is responsible for flattening transitive parents
+     * (per Cedar semantics) — we forward each parent verbatim. */
+    cedar_apply_context_map(eval_ctx, params, &errors);
+    cedar_apply_entities(eval_ctx, params, &errors,
+                         &p_type, &p_id, &r_type, &r_id);
 
     /* Evaluate every policy_set in the store and combine the results. */
     ZEND_HASH_FOREACH_STR_KEY_PTR(&store->policies, pid_key, ps) {
