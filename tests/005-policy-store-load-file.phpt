@@ -4,14 +4,16 @@ PolicyStore: loadFile reads a policy from disk
 <?php if (!extension_loaded("cedar")) die("skip cedar extension not loaded"); ?>
 --FILE--
 <?php
-$path = __DIR__ . "/_tmp.cedar";
+$path = tempnam(sys_get_temp_dir(), "cedar_");
 file_put_contents($path, "permit(principal, action, resource);");
 
-$store = new Cedar\PolicyStore();
-$store->loadFile("p1", $path);
-var_dump($store->policyIds());
-
-unlink($path);
+try {
+    $store = new Cedar\PolicyStore();
+    $store->loadFile("p1", $path);
+    var_dump($store->policyIds());
+} finally {
+    @unlink($path);
+}
 ?>
 --EXPECT--
 array(1) {
