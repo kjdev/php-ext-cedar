@@ -1251,6 +1251,10 @@ PHP_METHOD(Cedar_AuthorizationClient, isAuthorizedWithToken)
 
 PHP_MINIT_FUNCTION(cedar)
 {
+#if defined(ZTS) && defined(COMPILE_DL_CEDAR)
+    ZEND_TSRMLS_CACHE_UPDATE();
+#endif
+
     /* PolicyStore */
     cedar_ce_PolicyStore = register_class_Cedar_PolicyStore();
     cedar_ce_PolicyStore->create_object = cedar_policy_store_create;
@@ -1305,5 +1309,8 @@ zend_module_entry cedar_module_entry = {
 };
 
 #ifdef COMPILE_DL_CEDAR
+#ifdef ZTS
+ZEND_TSRMLS_CACHE_DEFINE()
+#endif
 ZEND_GET_MODULE(cedar)
 #endif

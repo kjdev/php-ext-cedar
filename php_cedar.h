@@ -25,4 +25,8 @@ extern zend_module_entry cedar_module_entry;
 #  include "TSRM.h"
 #endif
 
+#if defined(ZTS) && defined(COMPILE_DL_CEDAR)
+ZEND_TSRMLS_CACHE_EXTERN()
+#endif
+
 #endif /* PHP_CEDAR_H */
