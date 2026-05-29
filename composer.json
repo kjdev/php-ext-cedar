@@ -25,7 +25,7 @@
     "php-ext": {
         "extension-name": "cedar",
         "priority": 80,
-        "support-zts": false,
+        "support-zts": true,
         "support-nts": true,
         "configure-options": []
     },

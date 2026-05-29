@@ -11,9 +11,6 @@ jobs:
   build-and-test:
     name: PHP ${{ matrix.php-version }} (${{ matrix.ts }})
     runs-on: ubuntu-latest
-    # ZTS support is on the roadmap; keep ZTS rows informational only
-    # so the matrix surfaces results without blocking PRs.
-    continue-on-error: ${{ matrix.ts == 'zts' }}
     strategy:
       fail-fast: false
       matrix:
