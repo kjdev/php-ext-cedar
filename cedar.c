@@ -10,6 +10,7 @@
 #endif
 
 #include <stdbool.h>
+#include <stdatomic.h>
 
 #include "php.h"
 #include "ext/standard/info.h"
@@ -104,10 +105,11 @@ cedar_generate_policy_store_id(void)
 
     if (php_random_bytes_silent(raw, sizeof(raw)) == FAILURE) {
         /* Fallback (only when the CSPRNG fails) still fills the 16-byte
-         * buffer, so the output keeps the same 32-char hex shape. */
-        static uint64_t seq = 0;
+         * buffer, so the output keeps the same 32-char hex shape. The
+         * counter is atomic so ids stay unique across threads under ZTS. */
+        static atomic_uint_least64_t seq;
         uint64_t t = (uint64_t) time(NULL);
-        uint64_t s = ++seq;
+        uint64_t s = (uint64_t) atomic_fetch_add(&seq, 1) + 1;
         memcpy(raw, &t, sizeof(t));
         memcpy(raw + sizeof(t), &s, sizeof(s));
     }
