@@ -16,11 +16,11 @@ and re-import policy.
 
 ## Requirements
 
-- PHP **8.4 or later** (NTS). PHP 8.4 introduced the `ext/random/`
+- PHP **8.4 or later** (NTS or ZTS). PHP 8.4 introduced the `ext/random/`
   reorganization that this extension depends on for CSPRNG-backed
   `PolicyStore` id generation.
 - A POSIX build environment (`phpize`, `make`, a C compiler).
-- ZTS is **not** supported in the current release (see
+- Both NTS and ZTS builds are supported (see
   [ZTS status](#zts-status) below).
 
 ## Installation
@@ -387,20 +387,21 @@ constructor and dispatch on the request's `policyStoreId`.
 
 ## ZTS status
 
-`composer.json` reports `support-zts: false`. The current release has
-been verified to build and run only on **NTS** PHP. Code review of
-the C sources shows:
+Both **NTS** and **ZTS** builds are supported. `composer.json` reports
+`support-zts: true`, and CI runs a full `--enable-zts` build plus
+`make test` for every PHP version in the matrix. Thread-safety notes:
 
-- No `ZEND_BEGIN_MODULE_GLOBALS` / `TSRMLS_CACHE_*` usage; the
-  extension has no request-scoped module globals.
-- File-scope `static` state (class entries, object handlers) is
-  written exactly once in `MINIT` and read-only thereafter, which is
-  safe under ZTS.
+- The extension has no request-scoped module globals
+  (`ZEND_BEGIN_MODULE_GLOBALS`). For ZTS DSO builds it only defines the
+  TSRMLS cache symbol (`ZEND_TSRMLS_CACHE_DEFINE` / `EXTERN`) that the
+  Zend ABI requires.
+- File-scope `static` state (class entries, object handlers) is written
+  exactly once in `MINIT` and read-only thereafter.
+- The one mutable file-scope counter — the fallback in
+  `cedar_generate_policy_store_id` used only when the CSPRNG fails — is
+  an atomic counter, so ids stay unique across threads.
 - Per-request data lives on PHP objects (`zend_object` + internal
   structs) whose lifecycle is already thread-isolated by Zend.
-
-A full `--enable-zts` build + `make test` run is on the roadmap; until
-then the manifest is conservative.
 
 ## Developing the extension
 
