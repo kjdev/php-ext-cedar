@@ -38,14 +38,16 @@ typedef enum {
     PHP_CEDAR_TOKEN_TRUE,
     PHP_CEDAR_TOKEN_FALSE,
     PHP_CEDAR_TOKEN_IN,
-    PHP_CEDAR_TOKEN_IF,             /* Phase 2 */
-    PHP_CEDAR_TOKEN_THEN,           /* Phase 2 */
-    PHP_CEDAR_TOKEN_ELSE,           /* Phase 2 */
-    PHP_CEDAR_TOKEN_HAS,            /* Phase 2 */
-    PHP_CEDAR_TOKEN_LIKE,           /* Phase 2 */
-    PHP_CEDAR_TOKEN_IP,             /* Phase 3 */
-    PHP_CEDAR_TOKEN_DECIMAL,        /* Phase 3 */
-    PHP_CEDAR_TOKEN_IS,             /* Phase 4 */
+    PHP_CEDAR_TOKEN_IF,
+    PHP_CEDAR_TOKEN_THEN,
+    PHP_CEDAR_TOKEN_ELSE,
+    PHP_CEDAR_TOKEN_HAS,
+    PHP_CEDAR_TOKEN_LIKE,
+    PHP_CEDAR_TOKEN_IP,
+    PHP_CEDAR_TOKEN_DECIMAL,
+    PHP_CEDAR_TOKEN_IS,
+    PHP_CEDAR_TOKEN_DATETIME,       /* datetime() extension constructor */
+    PHP_CEDAR_TOKEN_DURATION,       /* duration() extension constructor */
 
     /* operators */
     PHP_CEDAR_TOKEN_EQ,             /* == */
@@ -53,13 +55,13 @@ typedef enum {
     PHP_CEDAR_TOKEN_AND,            /* && */
     PHP_CEDAR_TOKEN_OR,             /* || */
     PHP_CEDAR_TOKEN_NOT,            /* ! */
-    PHP_CEDAR_TOKEN_MINUS,          /* -  (binary and unary; Phase 4) */
-    PHP_CEDAR_TOKEN_PLUS,           /* +  (Phase 4) */
-    PHP_CEDAR_TOKEN_STAR,           /* *  (Phase 4) */
-    PHP_CEDAR_TOKEN_LT,             /* <  (Phase 2) */
-    PHP_CEDAR_TOKEN_GT,             /* >  (Phase 2) */
-    PHP_CEDAR_TOKEN_LE,             /* <= (Phase 2) */
-    PHP_CEDAR_TOKEN_GE,             /* >= (Phase 2) */
+    PHP_CEDAR_TOKEN_MINUS,          /* -  (binary and unary) */
+    PHP_CEDAR_TOKEN_PLUS,           /* + */
+    PHP_CEDAR_TOKEN_STAR,           /* * */
+    PHP_CEDAR_TOKEN_LT,             /* < */
+    PHP_CEDAR_TOKEN_GT,             /* > */
+    PHP_CEDAR_TOKEN_LE,             /* <= */
+    PHP_CEDAR_TOKEN_GE,             /* >= */
 
     /* delimiters */
     PHP_CEDAR_TOKEN_DOT,            /* . */
@@ -72,8 +74,8 @@ typedef enum {
     PHP_CEDAR_TOKEN_LBRACKET,       /* [ */
     PHP_CEDAR_TOKEN_RBRACKET,       /* ] */
     PHP_CEDAR_TOKEN_COLONCOLON,     /* :: */
-    PHP_CEDAR_TOKEN_COLON,          /* :  (Phase 4 record literal) */
-    PHP_CEDAR_TOKEN_AT,             /* @  (Phase 4) */
+    PHP_CEDAR_TOKEN_COLON,          /* :  (record literal) */
+    PHP_CEDAR_TOKEN_AT,             /* @ */
 
     /* literals */
     PHP_CEDAR_TOKEN_STRING,         /* "..." */
@@ -105,13 +107,13 @@ typedef enum {
     PHP_CEDAR_OP_AND,               /* && */
     PHP_CEDAR_OP_OR,                /* || */
     PHP_CEDAR_OP_IN,                /* in */
-    PHP_CEDAR_OP_LT,               /* <  (Phase 2) */
-    PHP_CEDAR_OP_GT,               /* >  (Phase 2) */
-    PHP_CEDAR_OP_LE,               /* <= (Phase 2) */
-    PHP_CEDAR_OP_GE,               /* >= (Phase 2) */
-    PHP_CEDAR_OP_PLUS,             /* +  (Phase 4) */
-    PHP_CEDAR_OP_MINUS,            /* -  (Phase 4) */
-    PHP_CEDAR_OP_MUL               /* *  (Phase 4) */
+    PHP_CEDAR_OP_LT,               /* < */
+    PHP_CEDAR_OP_GT,               /* > */
+    PHP_CEDAR_OP_LE,               /* <= */
+    PHP_CEDAR_OP_GE,               /* >= */
+    PHP_CEDAR_OP_PLUS,             /* + */
+    PHP_CEDAR_OP_MINUS,            /* - */
+    PHP_CEDAR_OP_MUL               /* * */
 } php_cedar_op_t;
 
 
@@ -141,23 +143,27 @@ typedef enum {
     /* operations */
     PHP_CEDAR_NODE_ATTR_ACCESS,     /* expr.ident */
     PHP_CEDAR_NODE_BINOP,           /* ==, !=, <, >, <=, >=, &&, ||, in,
-                                     +, -, * (Phase 4) */
+                                     +, -, * */
     PHP_CEDAR_NODE_UNOP,            /* ! */
     PHP_CEDAR_NODE_NEGATE,          /* - (unary) */
 
-    /* Phase 2 */
+    /* conditionals, like, method calls */
     PHP_CEDAR_NODE_HAS,             /* expr has ident */
     PHP_CEDAR_NODE_LIKE,            /* expr like "pattern" */
     PHP_CEDAR_NODE_IF_THEN_ELSE,    /* if expr then expr else expr */
     PHP_CEDAR_NODE_METHOD_CALL,     /* expr.method(args) */
 
-    /* Phase 3 */
+    /* extension literals */
     PHP_CEDAR_NODE_IP_LITERAL,      /* ip("addr") */
     PHP_CEDAR_NODE_DECIMAL_LITERAL, /* decimal("1.23") */
 
-    /* Phase 4 */
+    /* is / record */
     PHP_CEDAR_NODE_IS,              /* expr is type_name [in expr] */
-    PHP_CEDAR_NODE_RECORD           /* { key: expr, ... } */
+    PHP_CEDAR_NODE_RECORD,          /* { key: expr, ... } */
+
+    /* datetime / duration extension types */
+    PHP_CEDAR_NODE_DATETIME_LITERAL, /* datetime("2024-01-01T00:00:00Z") */
+    PHP_CEDAR_NODE_DURATION_LITERAL  /* duration("1d2h3m") */
 } php_cedar_node_type_t;
 
 
@@ -231,7 +237,13 @@ struct php_cedar_node_s {
                                                    "lessThan",
                                                    "lessThanOrEqual",
                                                    "greaterThan",
-                                                   "greaterThanOrEqual" */
+                                                   "greaterThanOrEqual",
+                                                   "offset",
+                                                   "durationSince",
+                                                   "toDate", "toTime",
+                                                   "toMilliseconds",
+                                                   "toSeconds", "toMinutes",
+                                                   "toHours", "toDays" */
             php_cedar_node_t *arg;              /* NULL for zero-arg
                                                    methods (isIpv4 etc.) */
         } method_call;
@@ -244,7 +256,15 @@ struct php_cedar_node_s {
             php_cedar_str_t  text;
         } decimal_literal;
 
-        struct {                                /* IS (Phase 4) */
+        struct {                                /* DATETIME_LITERAL */
+            php_cedar_str_t  text;
+        } datetime_literal;
+
+        struct {                                /* DURATION_LITERAL */
+            php_cedar_str_t  text;
+        } duration_literal;
+
+        struct {                                /* IS */
             php_cedar_node_t *object;           /* expression under test */
             php_cedar_str_t         entity_type;      /* type_name
                                                    ("User", "Ns::User", ...) */
@@ -265,9 +285,8 @@ typedef enum {
     PHP_CEDAR_SCOPE_NONE,           /* no constraint (matches all) */
     PHP_CEDAR_SCOPE_EQ,             /* == entity_ref */
     PHP_CEDAR_SCOPE_IN,             /* in entity_ref | set */
-    PHP_CEDAR_SCOPE_IS,             /* is type_name (Phase 4) */
-    PHP_CEDAR_SCOPE_IS_IN           /* is type_name in entity_ref
-                                       (Phase 4) */
+    PHP_CEDAR_SCOPE_IS,             /* is type_name */
+    PHP_CEDAR_SCOPE_IS_IN           /* is type_name in entity_ref */
 } php_cedar_scope_constraint_t;
 
 /* scope constraint */
@@ -279,7 +298,7 @@ typedef struct {
                                                    only; empty otherwise) */
 } php_cedar_scope_t;
 
-/* annotation (Phase 4) */
+/* annotation */
 typedef struct {
     php_cedar_str_t  key;                     /* annotation name (e.g. "id", "advice") */
     php_cedar_str_t  value;                   /* annotation value; empty if valueless */
@@ -295,7 +314,7 @@ typedef struct {
 typedef struct {
     unsigned           is_forbid:1;         /* 0 = permit, 1 = forbid */
     php_cedar_array_t       *annotations;         /* array of php_cedar_annotation_t
-                                               (Phase 4, NULL if none) */
+                                               (NULL if none) */
     php_cedar_scope_t  principal;
     php_cedar_scope_t  action;
     php_cedar_scope_t  resource;
@@ -406,6 +425,8 @@ typedef struct {
 #define PHP_CEDAR_RVAL_IP       6
 #define PHP_CEDAR_RVAL_RECORD   7
 #define PHP_CEDAR_RVAL_DECIMAL  8
+#define PHP_CEDAR_RVAL_DATETIME 9
+#define PHP_CEDAR_RVAL_DURATION 10
 
 
 /*
@@ -449,6 +470,17 @@ typedef struct {
          * scaled value would overflow.
          */
         int64_t  decimal_val;
+        /*
+         * Cedar datetime: UTC milliseconds since the Unix epoch
+         * (1970-01-01T00:00:00Z), signed i64. A distinct type from Long
+         * with no implicit conversion.
+         */
+        int64_t  datetime_val;
+        /*
+         * Cedar duration: signed i64 count of milliseconds. Negative
+         * values are valid. A distinct type from Long.
+         */
+        int64_t  duration_val;
     } v;
 } php_cedar_value_t;
 

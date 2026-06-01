@@ -26,7 +26,7 @@ php_cedar_value_t php_cedar_expr_eval(php_cedar_node_t *node,
  * Shared with eval.c so the injection API can eagerly materialize
  * IP attribute values at insertion time.
  */
-php_cedar_value_t php_cedar_make_ip(php_cedar_str_t *s);
+php_cedar_value_t php_cedar_make_ip(const php_cedar_str_t *s);
 
 
 /*
@@ -36,7 +36,29 @@ php_cedar_value_t php_cedar_make_ip(php_cedar_str_t *s);
  * fit in int64_t. Shared with eval.c so the injection API can eagerly
  * materialize decimal attribute values at insertion time.
  */
-php_cedar_value_t php_cedar_make_decimal(php_cedar_str_t *s);
+php_cedar_value_t php_cedar_make_decimal(const php_cedar_str_t *s);
+
+
+/*
+ * Parse a Cedar datetime string ("YYYY-MM-DD" or
+ * "YYYY-MM-DDThh:mm:ss(.SSS)?(Z|±hhmm)") into UTC epoch milliseconds.
+ * Returns an RVAL_ERROR value when the input is malformed, denotes a
+ * non-existent date, or carries a time without a timezone designator.
+ * Shared with eval.c so the injection API can eagerly materialize
+ * datetime attribute values at insertion time.
+ */
+php_cedar_value_t php_cedar_make_datetime(const php_cedar_str_t *s);
+
+
+/*
+ * Parse a Cedar duration string ("[-]?(\d+d)?(\d+h)?(\d+m)?(\d+s)?
+ * (\d+ms)?", at least one unit) into a signed millisecond count.
+ * Returns an RVAL_ERROR value on malformed input, an out-of-order or
+ * repeated unit, or i64 overflow. Shared with eval.c so the injection
+ * API can eagerly materialize duration attribute values at insertion
+ * time.
+ */
+php_cedar_value_t php_cedar_make_duration(const php_cedar_str_t *s);
 
 
 #endif /* PHP_CEDAR_EXPR_H */

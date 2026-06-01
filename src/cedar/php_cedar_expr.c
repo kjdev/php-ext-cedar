@@ -83,6 +83,32 @@ php_cedar_make_long(int64_t n)
 }
 
 
+/* build a datetime runtime value from UTC epoch milliseconds */
+static php_cedar_value_t
+php_cedar_make_datetime_ms(int64_t ms)
+{
+    php_cedar_value_t val;
+
+    php_cedar_memzero(&val, sizeof(php_cedar_value_t));
+    val.type = PHP_CEDAR_RVAL_DATETIME;
+    val.v.datetime_val = ms;
+    return val;
+}
+
+
+/* build a duration runtime value from a signed millisecond count */
+static php_cedar_value_t
+php_cedar_make_duration_ms(int64_t ms)
+{
+    php_cedar_value_t val;
+
+    php_cedar_memzero(&val, sizeof(php_cedar_value_t));
+    val.type = PHP_CEDAR_RVAL_DURATION;
+    val.v.duration_val = ms;
+    return val;
+}
+
+
 static php_cedar_value_t
 php_cedar_make_entity(php_cedar_str_t type, php_cedar_str_t id)
 {
@@ -110,10 +136,10 @@ php_cedar_make_record(php_cedar_array_t *attrs)
 
 /* parse bounded decimal: overflow-safe with leading-zero rejection */
 static php_cedar_int_t
-php_cedar_parse_bounded_dec(unsigned char **pp, unsigned char *end, php_cedar_uint_t max,
-    php_cedar_uint_t *out)
+php_cedar_parse_bounded_dec(const unsigned char **pp, const unsigned char *end,
+    php_cedar_uint_t max, php_cedar_uint_t *out)
 {
-    unsigned char *p, *start;
+    const unsigned char *p, *start;
     php_cedar_uint_t val, digit;
 
     p = *pp;
@@ -147,7 +173,7 @@ php_cedar_parse_bounded_dec(unsigned char **pp, unsigned char *end, php_cedar_ui
 
 /* parse CIDR prefix length: digits after '/' with leading-zero rejection */
 static php_cedar_int_t
-php_cedar_parse_cidr_prefix(unsigned char **pp, unsigned char *end,
+php_cedar_parse_cidr_prefix(const unsigned char **pp, const unsigned char *end,
     php_cedar_uint_t max_prefix, php_cedar_uint_t *prefix_len)
 {
     return php_cedar_parse_bounded_dec(pp, end, max_prefix, prefix_len);
@@ -156,10 +182,10 @@ php_cedar_parse_cidr_prefix(unsigned char **pp, unsigned char *end,
 
 /* parse IPv4 address: "a.b.c.d" with optional "/prefix" */
 static php_cedar_int_t
-php_cedar_parse_ipv4(unsigned char *data, size_t len,
+php_cedar_parse_ipv4(const unsigned char *data, size_t len,
     unsigned char *addr, php_cedar_uint_t *prefix_len)
 {
-    unsigned char *p, *end;
+    const unsigned char *p, *end;
     php_cedar_uint_t octet, i;
 
     p = data;
@@ -204,10 +230,10 @@ php_cedar_parse_ipv4(unsigned char *data, size_t len,
 
 /* parse IPv6 address with optional "/prefix" */
 static php_cedar_int_t
-php_cedar_parse_ipv6(unsigned char *data, size_t len,
+php_cedar_parse_ipv6(const unsigned char *data, size_t len,
     unsigned char *addr, php_cedar_uint_t *prefix_len)
 {
-    unsigned char *p, *end, *slash;
+    const unsigned char *p, *end, *slash;
     php_cedar_uint_t groups[8], n_groups, gap_pos, i, val;
     size_t addr_len;
 
@@ -373,10 +399,10 @@ done_groups:
  * reference parser.
  */
 php_cedar_value_t
-php_cedar_make_decimal(php_cedar_str_t *s)
+php_cedar_make_decimal(const php_cedar_str_t *s)
 {
     php_cedar_value_t val;
-    unsigned char *p, *end;
+    const unsigned char *p, *end;
     php_cedar_flag_t negative;
     int64_t int_part, frac_part, scaled;
     php_cedar_uint_t frac_digits;
@@ -470,9 +496,337 @@ php_cedar_make_decimal(php_cedar_str_t *s)
 }
 
 
+/* number of days in the given month, accounting for leap years */
+static php_cedar_uint_t
+php_cedar_days_in_month(int year, int month)
+{
+    static const php_cedar_uint_t dim[12] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+
+    if (month == 2
+        && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0))
+    {
+        return 29;
+    }
+
+    return dim[month - 1];
+}
+
+
+/*
+ * Days since 1970-01-01 for a proleptic Gregorian date (Howard
+ * Hinnant's days_from_civil). Valid across the full datetime
+ * construction range (years 0000-9999) and computed in int64_t.
+ */
+static int64_t
+php_cedar_days_from_civil(int64_t y, int64_t m, int64_t d)
+{
+    int64_t era, yoe, doy, doe;
+
+    y -= (m <= 2);
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = y - era * 400;                                    /* [0, 399] */
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;   /* [0, 365] */
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;            /* [0, 146096] */
+
+    return era * 146097 + doe - 719468;
+}
+
+
+/*
+ * Read exactly `ndigits` ASCII decimal digits from *pp into *out,
+ * advancing *pp. Returns PHP_CEDAR_ERROR if fewer than ndigits digits are
+ * available or a non-digit is encountered.
+ */
+static php_cedar_int_t
+php_cedar_read_uint(const unsigned char **pp, const unsigned char *end,
+    php_cedar_uint_t ndigits, int *out)
+{
+    const unsigned char *p = *pp;
+    int v = 0;
+    php_cedar_uint_t i;
+
+    for (i = 0; i < ndigits; i++) {
+        if (p >= end || *p < '0' || *p > '9') {
+            return PHP_CEDAR_ERROR;
+        }
+        v = v * 10 + (*p - '0');
+        p++;
+    }
+
+    *pp = p;
+    *out = v;
+    return PHP_CEDAR_OK;
+}
+
+
+/*
+ * Parse a Cedar datetime literal into UTC epoch milliseconds (i64).
+ * Accepts the date-only form "YYYY-MM-DD", which denotes 00:00:00 UTC,
+ * and the full form
+ * "YYYY-MM-DDThh:mm:ss(.SSS)?(Z|±hhmm)" where the timezone designator is
+ * mandatory for any form carrying a time. A bare trailing "T" without a
+ * time component is rejected, matching the cedar-policy reference.
+ * Fractional seconds are exactly
+ * three digits when present. Field ranges are validated (month 1-12, day
+ * per month with leap years, hour 0-23, minute/second 0-59, offset hour
+ * 0-23 / minute 0-59); malformed input or trailing garbage yields
+ * RVAL_ERROR. The 4-digit year keeps the result within int64_t.
+ */
+php_cedar_value_t
+php_cedar_make_datetime(const php_cedar_str_t *s)
+{
+    php_cedar_value_t val;
+    const unsigned char *p, *end;
+    int year, month, day, hh, mm, ss, frac;
+    int64_t days, ms, offset_min;
+
+    php_cedar_memzero(&val, sizeof(php_cedar_value_t));
+    val.type = PHP_CEDAR_RVAL_ERROR;
+
+    if (s == NULL || s->len < 10) {
+        return val;
+    }
+
+    p = s->data;
+    end = p + s->len;
+
+    /* date: YYYY-MM-DD */
+    if (php_cedar_read_uint(&p, end, 4, &year) != PHP_CEDAR_OK) {
+        return val;
+    }
+    if (p >= end || *p != '-') {
+        return val;
+    }
+    p++;
+    if (php_cedar_read_uint(&p, end, 2, &month) != PHP_CEDAR_OK) {
+        return val;
+    }
+    if (p >= end || *p != '-') {
+        return val;
+    }
+    p++;
+    if (php_cedar_read_uint(&p, end, 2, &day) != PHP_CEDAR_OK) {
+        return val;
+    }
+
+    if (month < 1 || month > 12) {
+        return val;
+    }
+    if (day < 1 || (php_cedar_uint_t) day > php_cedar_days_in_month(year, month)) {
+        return val;
+    }
+
+    hh = mm = ss = frac = 0;
+    offset_min = 0;
+
+    if (p != end) {
+        /*
+         * A time component is present; it must start with 'T' and carry
+         * a full hh:mm:ss plus a timezone designator. A bare trailing
+         * 'T' is rejected, matching the reference implementation.
+         */
+        if (*p != 'T') {
+            return val;
+        }
+        p++;
+
+        /* time: hh:mm:ss */
+        if (php_cedar_read_uint(&p, end, 2, &hh) != PHP_CEDAR_OK) {
+            return val;
+        }
+        if (p >= end || *p != ':') {
+            return val;
+        }
+        p++;
+        if (php_cedar_read_uint(&p, end, 2, &mm) != PHP_CEDAR_OK) {
+            return val;
+        }
+        if (p >= end || *p != ':') {
+            return val;
+        }
+        p++;
+        if (php_cedar_read_uint(&p, end, 2, &ss) != PHP_CEDAR_OK) {
+            return val;
+        }
+
+        if (hh > 23 || mm > 59 || ss > 59) {
+            return val;
+        }
+
+        /* optional .SSS (exactly three digits) */
+        if (p < end && *p == '.') {
+            p++;
+            if (php_cedar_read_uint(&p, end, 3, &frac) != PHP_CEDAR_OK) {
+                return val;
+            }
+        }
+
+        /* timezone designator is mandatory for time forms */
+        if (p >= end) {
+            return val;
+        }
+
+        if (*p == 'Z') {
+            p++;
+            if (p != end) {
+                return val;
+            }
+
+        } else if (*p == '+' || *p == '-') {
+            int oh, om, sign;
+
+            sign = (*p == '-') ? -1 : 1;
+            p++;
+            if (php_cedar_read_uint(&p, end, 2, &oh) != PHP_CEDAR_OK) {
+                return val;
+            }
+            if (php_cedar_read_uint(&p, end, 2, &om) != PHP_CEDAR_OK) {
+                return val;
+            }
+            if (p != end || oh > 23 || om > 59) {
+                return val;
+            }
+            offset_min = (int64_t) sign * ((int64_t) oh * 60 + om);
+
+        } else {
+            return val;
+        }
+    }
+
+    days = php_cedar_days_from_civil(year, month, day);
+    ms = ((((days * 24 + hh) * 60 + mm) * 60 + ss) * 1000) + frac;
+    ms -= offset_min * 60000;
+
+    val.type = PHP_CEDAR_RVAL_DATETIME;
+    val.v.datetime_val = ms;
+    return val;
+}
+
+
+/*
+ * Parse a Cedar duration literal into a signed millisecond count (i64).
+ * Grammar: an optional leading '-' followed by one or more
+ * "<digits><unit>" groups in strictly descending unit order
+ * (d > h > m > s > ms), each unit appearing at most once and at least
+ * one unit present. 'm' (minutes) and 'ms' (milliseconds) are
+ * distinguished by a trailing 's'. Overflow at any accumulation step,
+ * an empty string, a missing unit, a repeated/out-of-order unit, or
+ * trailing garbage yields RVAL_ERROR.
+ */
+php_cedar_value_t
+php_cedar_make_duration(const php_cedar_str_t *s)
+{
+    php_cedar_value_t val;
+    const unsigned char *p, *end;
+    php_cedar_flag_t negative;
+    int64_t total;
+    php_cedar_uint_t stage, nunits;
+
+    php_cedar_memzero(&val, sizeof(php_cedar_value_t));
+    val.type = PHP_CEDAR_RVAL_ERROR;
+
+    if (s == NULL || s->len == 0) {
+        return val;
+    }
+
+    p = s->data;
+    end = p + s->len;
+
+    negative = 0;
+    if (*p == '-') {
+        negative = 1;
+        p++;
+    }
+
+    total = 0;
+    stage = 0;          /* lowest accepted unit index: d=0,h=1,m=2,s=3,ms=4 */
+    nunits = 0;
+
+    while (p < end) {
+        int64_t qty, factor, contrib;
+        php_cedar_uint_t unit_stage;
+
+        /* quantity: at least one digit */
+        if (*p < '0' || *p > '9') {
+            return val;
+        }
+        qty = 0;
+        while (p < end && *p >= '0' && *p <= '9') {
+            int64_t d = *p - '0';
+            if (qty > (INT64_MAX - d) / 10) {
+                return val;
+            }
+            qty = qty * 10 + d;
+            p++;
+        }
+
+        /* unit */
+        if (p >= end) {
+            return val;
+        }
+        if (*p == 'd') {
+            unit_stage = 0;
+            factor = 86400000;
+            p++;
+        } else if (*p == 'h') {
+            unit_stage = 1;
+            factor = 3600000;
+            p++;
+        } else if (*p == 'm') {
+            if (p + 1 < end && *(p + 1) == 's') {
+                unit_stage = 4;
+                factor = 1;
+                p += 2;
+            } else {
+                unit_stage = 2;
+                factor = 60000;
+                p++;
+            }
+        } else if (*p == 's') {
+            unit_stage = 3;
+            factor = 1000;
+            p++;
+        } else {
+            return val;
+        }
+
+        /* enforce strictly descending order; rejects repeats too */
+        if (unit_stage < stage) {
+            return val;
+        }
+        stage = unit_stage + 1;
+
+        if (__builtin_mul_overflow(qty, factor, &contrib)) {
+            return val;
+        }
+        if (__builtin_add_overflow(total, contrib, &total)) {
+            return val;
+        }
+
+        nunits++;
+    }
+
+    if (nunits == 0) {
+        return val;
+    }
+
+    if (negative) {
+        if (__builtin_sub_overflow((int64_t) 0, total, &total)) {
+            return val;
+        }
+    }
+
+    val.type = PHP_CEDAR_RVAL_DURATION;
+    val.v.duration_val = total;
+    return val;
+}
+
+
 /* parse IP string to binary runtime value */
 php_cedar_value_t
-php_cedar_make_ip(php_cedar_str_t *s)
+php_cedar_make_ip(const php_cedar_str_t *s)
 {
     php_cedar_value_t val;
 
@@ -482,7 +836,7 @@ php_cedar_make_ip(php_cedar_str_t *s)
      * actual OOB protection lives in parse_ipv4 / parse_ipv6 which
      * clamp to data + len.
      */
-    if (s->len == 0 || s->len > 43) {
+    if (s == NULL || s->len == 0 || s->len > 43) {
         return php_cedar_make_error();
     }
 
@@ -616,6 +970,12 @@ php_cedar_value_equals(php_cedar_value_t *a, php_cedar_value_t *b,
 
     case PHP_CEDAR_RVAL_DECIMAL:
         return (a->v.decimal_val == b->v.decimal_val);
+
+    case PHP_CEDAR_RVAL_DATETIME:
+        return (a->v.datetime_val == b->v.datetime_val);
+
+    case PHP_CEDAR_RVAL_DURATION:
+        return (a->v.duration_val == b->v.duration_val);
 
     case PHP_CEDAR_RVAL_SET:
         if (a->v.set_elts == NULL || b->v.set_elts == NULL) {
@@ -779,6 +1139,66 @@ php_cedar_resolve_var_attrs(php_cedar_var_type_t var_type,
 }
 
 
+/* resolve an entity slot tag to its attribute array */
+static php_cedar_array_t *
+php_cedar_resolve_slot_attrs(php_cedar_uint_t slot, php_cedar_eval_ctx_t *ctx)
+{
+    switch (slot) {
+
+    case PHP_CEDAR_ENTITY_SLOT_PRINCIPAL:
+        return ctx->principal_attrs;
+
+    case PHP_CEDAR_ENTITY_SLOT_ACTION:
+        return ctx->action_attrs;
+
+    case PHP_CEDAR_ENTITY_SLOT_RESOURCE:
+        return ctx->resource_attrs;
+
+    default:
+        return NULL;
+    }
+}
+
+
+/*
+ * Return the request slot whose (type, id) matches the given entity, or
+ * PHP_CEDAR_ENTITY_SLOT_NONE if none do. Lets an entity literal
+ * Foo::"id" that names the principal / action / resource resolve its
+ * attributes and ancestors through the corresponding per-slot arrays,
+ * just like the bare keyword would. Principal is checked first so a
+ * deliberate (type, id) collision across slots resolves deterministically
+ * (the same tie-break the slot tag uses elsewhere).
+ */
+static php_cedar_uint_t
+php_cedar_entity_request_slot(php_cedar_eval_ctx_t *ctx,
+    php_cedar_str_t *type, php_cedar_str_t *id)
+{
+    if (ctx == NULL) {
+        return PHP_CEDAR_ENTITY_SLOT_NONE;
+    }
+
+    if (php_cedar_str_eq(type, &ctx->principal_type)
+        && php_cedar_str_eq(id, &ctx->principal_id))
+    {
+        return PHP_CEDAR_ENTITY_SLOT_PRINCIPAL;
+    }
+
+    if (php_cedar_str_eq(type, &ctx->action_type)
+        && php_cedar_str_eq(id, &ctx->action_id))
+    {
+        return PHP_CEDAR_ENTITY_SLOT_ACTION;
+    }
+
+    if (php_cedar_str_eq(type, &ctx->resource_type)
+        && php_cedar_str_eq(id, &ctx->resource_id))
+    {
+        return PHP_CEDAR_ENTITY_SLOT_RESOURCE;
+    }
+
+    return PHP_CEDAR_ENTITY_SLOT_NONE;
+}
+
+
 /*
  * Evaluate attribute access expr.attr.
  *
@@ -820,6 +1240,29 @@ php_cedar_eval_attr_access(php_cedar_node_t *node,
     if (obj_val.type == PHP_CEDAR_RVAL_ERROR) {
         return obj_val;
     }
+
+    /*
+     * Entity literal naming the principal / action / resource: resolve
+     * the attribute through the matching per-slot array. The slot is
+     * stamped when the literal's (type, id) matches a request entity
+     * (see PHP_CEDAR_NODE_ENTITY_REF); a literal that names no request
+     * entity carries SLOT_NONE and has no attribute store, so it errors
+     * (the policy is not applicable), matching the bare-keyword path.
+     */
+    if (obj_val.type == PHP_CEDAR_RVAL_ENTITY) {
+        attrs = php_cedar_resolve_slot_attrs(obj_val.v.entity.slot, ctx);
+        if (attrs == NULL) {
+            return php_cedar_make_error();
+        }
+
+        attr = php_cedar_find_attr(attrs, &node->u.attr_access.attr);
+        if (attr == NULL) {
+            return php_cedar_make_error();
+        }
+
+        return attr->value;
+    }
+
     if (obj_val.type != PHP_CEDAR_RVAL_RECORD) {
         return php_cedar_make_error();
     }
@@ -868,6 +1311,24 @@ php_cedar_eval_has(php_cedar_node_t *node,
     if (obj_val.type == PHP_CEDAR_RVAL_ERROR) {
         return obj_val;
     }
+
+    /*
+     * Entity literal naming the principal / action / resource: report
+     * whether the attribute exists in the matching per-slot array. A
+     * literal that names no request entity (SLOT_NONE) has no attribute
+     * store, so `has` is an error, matching the slow-path treatment of
+     * any non-record value.
+     */
+    if (obj_val.type == PHP_CEDAR_RVAL_ENTITY) {
+        attrs = php_cedar_resolve_slot_attrs(obj_val.v.entity.slot, ctx);
+        if (attrs == NULL) {
+            return php_cedar_make_error();
+        }
+
+        return php_cedar_make_bool(
+            php_cedar_find_attr(attrs, &node->u.has.attr) != NULL);
+    }
+
     if (obj_val.type != PHP_CEDAR_RVAL_RECORD) {
         return php_cedar_make_error();
     }
@@ -1029,6 +1490,66 @@ php_cedar_eval_method_call(php_cedar_node_t *node,
             }
 
             return php_cedar_make_bool(obj.v.set_elts->nelts == 0);
+        }
+
+        /* datetime zero-arg methods: receiver must be datetime */
+        if (obj.type == PHP_CEDAR_RVAL_DATETIME) {
+            int64_t ms = obj.v.datetime_val;
+            int64_t r = ms % 86400000;
+
+            /* floor the remainder so truncation works for ms < 0 */
+            if (r < 0) {
+                r += 86400000;
+            }
+
+            /* toDate: truncate to 00:00:00 UTC of the same day */
+            if (method->len == 6
+                && php_cedar_memcmp(method->data, "toDate", 6) == 0)
+            {
+                return php_cedar_make_datetime_ms(ms - r);
+            }
+
+            /* toTime: milliseconds elapsed since toDate(), as a duration */
+            if (method->len == 6
+                && php_cedar_memcmp(method->data, "toTime", 6) == 0)
+            {
+                return php_cedar_make_duration_ms(r);
+            }
+
+            return php_cedar_make_error();
+        }
+
+        /* duration zero-arg conversion methods (result is Long) */
+        if (obj.type == PHP_CEDAR_RVAL_DURATION) {
+            int64_t d = obj.v.duration_val;
+
+            if (method->len == 14
+                && php_cedar_memcmp(method->data, "toMilliseconds", 14) == 0)
+            {
+                return php_cedar_make_long(d);
+            }
+            if (method->len == 9
+                && php_cedar_memcmp(method->data, "toSeconds", 9) == 0)
+            {
+                return php_cedar_make_long(d / 1000);
+            }
+            if (method->len == 9
+                && php_cedar_memcmp(method->data, "toMinutes", 9) == 0)
+            {
+                return php_cedar_make_long(d / 60000);
+            }
+            if (method->len == 7
+                && php_cedar_memcmp(method->data, "toHours", 7) == 0)
+            {
+                return php_cedar_make_long(d / 3600000);
+            }
+            if (method->len == 6
+                && php_cedar_memcmp(method->data, "toDays", 6) == 0)
+            {
+                return php_cedar_make_long(d / 86400000);
+            }
+
+            return php_cedar_make_error();
         }
 
         /* IP inspection methods: receiver must be IP */
@@ -1221,6 +1742,45 @@ php_cedar_eval_method_call(php_cedar_node_t *node,
     }
 
     /*
+     * datetime one-arg methods. offset(duration) shifts a datetime and
+     * durationSince(datetime) returns the signed difference; both error
+     * on i64 overflow or argument type mismatch.
+     */
+    if (obj.type == PHP_CEDAR_RVAL_DATETIME) {
+        int64_t result;
+
+        if (method->len == 6
+            && php_cedar_memcmp(method->data, "offset", 6) == 0)
+        {
+            if (arg.type != PHP_CEDAR_RVAL_DURATION) {
+                return php_cedar_make_error();
+            }
+            if (__builtin_add_overflow(obj.v.datetime_val,
+                                       arg.v.duration_val, &result))
+            {
+                return php_cedar_make_error();
+            }
+            return php_cedar_make_datetime_ms(result);
+        }
+
+        if (method->len == 13
+            && php_cedar_memcmp(method->data, "durationSince", 13) == 0)
+        {
+            if (arg.type != PHP_CEDAR_RVAL_DATETIME) {
+                return php_cedar_make_error();
+            }
+            if (__builtin_sub_overflow(obj.v.datetime_val,
+                                       arg.v.datetime_val, &result))
+            {
+                return php_cedar_make_error();
+            }
+            return php_cedar_make_duration_ms(result);
+        }
+
+        return php_cedar_make_error();
+    }
+
+    /*
      * Decimal comparison methods. Cedar exposes ordering on decimals
      * only via these four methods; the binary <, <=, >, >= operators
      * remain reserved for Long. Both receiver and argument must be
@@ -1399,9 +1959,25 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
     case PHP_CEDAR_NODE_DECIMAL_LITERAL:
         return php_cedar_make_decimal(&node->u.decimal_literal.text);
 
+    case PHP_CEDAR_NODE_DATETIME_LITERAL:
+        return php_cedar_make_datetime(&node->u.datetime_literal.text);
+
+    case PHP_CEDAR_NODE_DURATION_LITERAL:
+        return php_cedar_make_duration(&node->u.duration_literal.text);
+
     case PHP_CEDAR_NODE_ENTITY_REF:
-        return php_cedar_make_entity(node->u.entity_ref.entity_type,
-                                     node->u.entity_ref.entity_id);
+        val = php_cedar_make_entity(node->u.entity_ref.entity_type,
+                                    node->u.entity_ref.entity_id);
+        /*
+         * Tag the literal with a request slot when it names the
+         * principal / action / resource so attribute, has, and `in`
+         * resolution reach the matching per-slot arrays, exactly as the
+         * bare keyword does. Literals that name no request entity keep
+         * SLOT_NONE and match reflexively only.
+         */
+        val.v.entity.slot = php_cedar_entity_request_slot(
+            ctx, &val.v.entity.type, &val.v.entity.id);
+        return val;
 
     case PHP_CEDAR_NODE_VAR:
         switch (node->u.var_type) {
@@ -1421,8 +1997,13 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
             val.v.entity.slot = PHP_CEDAR_ENTITY_SLOT_RESOURCE;
             return val;
         case PHP_CEDAR_VAR_CONTEXT:
-            /* context alone is not a value; only context.attr */
-            return php_cedar_make_error();
+            /*
+             * context is an ordinary record value, usable as an operand
+             * of ==, !=, has, etc. ctx->context_attrs is always a
+             * (possibly empty) array, so an unset context materialises
+             * as the empty record, matching Cedar semantics.
+             */
+            return php_cedar_make_record(ctx->context_attrs);
         default:
             return php_cedar_make_error();
         }
@@ -1561,9 +2142,11 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
             if (right.type == PHP_CEDAR_RVAL_ERROR) {
                 return right;
             }
-            if (left.type != right.type) {
-                return php_cedar_make_error();
-            }
+            /*
+             * `==` is a total function: a type mismatch is not an error but
+             * simply "not equal" (false). php_cedar_value_equals() already
+             * returns 0 for mismatched types, so no early guard is needed.
+             */
             {
                 php_cedar_int_t r = php_cedar_value_equals(&left, &right, 0);
                 if (r == PHP_CEDAR_ERROR) {
@@ -1583,9 +2166,11 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
             if (right.type == PHP_CEDAR_RVAL_ERROR) {
                 return right;
             }
-            if (left.type != right.type) {
-                return php_cedar_make_error();
-            }
+            /*
+             * `!=` is a total function: a type mismatch is not an error but
+             * simply "not equal" (true). php_cedar_value_equals() already
+             * returns 0 for mismatched types, so no early guard is needed.
+             */
             {
                 php_cedar_int_t r = php_cedar_value_equals(&left, &right, 0);
                 if (r == PHP_CEDAR_ERROR) {
@@ -1610,7 +2195,9 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
         case PHP_CEDAR_OP_LT:
         case PHP_CEDAR_OP_GT:
         case PHP_CEDAR_OP_LE:
-        case PHP_CEDAR_OP_GE:
+        case PHP_CEDAR_OP_GE: {
+            int64_t lv, rv;
+
             left = php_cedar_expr_eval(node->u.binop.left, ctx,
                                        pool, log);
             if (left.type == PHP_CEDAR_RVAL_ERROR) {
@@ -1621,28 +2208,45 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
             if (right.type == PHP_CEDAR_RVAL_ERROR) {
                 return right;
             }
-            if (left.type != PHP_CEDAR_RVAL_LONG
-                || right.type != PHP_CEDAR_RVAL_LONG)
-            {
+
+            /*
+             * Ordering is defined on Long, datetime, and duration, but
+             * only between two operands of the same type. The scaled i64
+             * representation is order-preserving for all three.
+             */
+            if (left.type != right.type) {
+                return php_cedar_make_error();
+            }
+            switch (left.type) {
+            case PHP_CEDAR_RVAL_LONG:
+                lv = left.v.long_val;
+                rv = right.v.long_val;
+                break;
+            case PHP_CEDAR_RVAL_DATETIME:
+                lv = left.v.datetime_val;
+                rv = right.v.datetime_val;
+                break;
+            case PHP_CEDAR_RVAL_DURATION:
+                lv = left.v.duration_val;
+                rv = right.v.duration_val;
+                break;
+            default:
                 return php_cedar_make_error();
             }
 
             switch (node->u.binop.op) {
             case PHP_CEDAR_OP_LT:
-                return php_cedar_make_bool(
-                    left.v.long_val < right.v.long_val);
+                return php_cedar_make_bool(lv < rv);
             case PHP_CEDAR_OP_GT:
-                return php_cedar_make_bool(
-                    left.v.long_val > right.v.long_val);
+                return php_cedar_make_bool(lv > rv);
             case PHP_CEDAR_OP_LE:
-                return php_cedar_make_bool(
-                    left.v.long_val <= right.v.long_val);
+                return php_cedar_make_bool(lv <= rv);
             case PHP_CEDAR_OP_GE:
-                return php_cedar_make_bool(
-                    left.v.long_val >= right.v.long_val);
+                return php_cedar_make_bool(lv >= rv);
             default:
                 return php_cedar_make_error();
             }
+        }
 
         case PHP_CEDAR_OP_PLUS:
         case PHP_CEDAR_OP_MINUS:
@@ -1703,7 +2307,7 @@ php_cedar_expr_eval_body(php_cedar_node_t *node,
         }
         return php_cedar_make_long(-left.v.long_val);
 
-    /* Phase 2 */
+    /* conditionals, like, method calls */
     case PHP_CEDAR_NODE_HAS:
         return php_cedar_eval_has(node, ctx, pool, log);
 

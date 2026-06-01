@@ -17,7 +17,7 @@
 
 /* string equality (shared across parser/expr/eval layers) */
 static inline php_cedar_int_t
-php_cedar_str_eq(php_cedar_str_t *a, php_cedar_str_t *b)
+php_cedar_str_eq(const php_cedar_str_t *a, const php_cedar_str_t *b)
 {
     return (a->len == b->len
             && (a->len == 0

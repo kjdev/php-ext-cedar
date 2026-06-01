@@ -57,7 +57,9 @@ php_cedar_token_is_ident(php_cedar_token_type_t type)
 {
     return (type == PHP_CEDAR_TOKEN_IDENT
             || type == PHP_CEDAR_TOKEN_IP
-            || type == PHP_CEDAR_TOKEN_DECIMAL);
+            || type == PHP_CEDAR_TOKEN_DECIMAL
+            || type == PHP_CEDAR_TOKEN_DATETIME
+            || type == PHP_CEDAR_TOKEN_DURATION);
 }
 
 
@@ -846,6 +848,78 @@ php_cedar_parse_primary(php_cedar_parser_ctx_t *ctx)
             return NULL;
         }
         node->u.decimal_literal.text = ctx->current.value;
+        php_cedar_parser_advance(ctx);
+        if (php_cedar_parser_expect(ctx, PHP_CEDAR_TOKEN_RPAREN)
+            != PHP_CEDAR_OK)
+        {
+            return NULL;
+        }
+        return node;
+
+    case PHP_CEDAR_TOKEN_DATETIME:
+        php_cedar_parser_advance(ctx);
+        if (php_cedar_parser_expect(ctx, PHP_CEDAR_TOKEN_LPAREN)
+            != PHP_CEDAR_OK)
+        {
+            return NULL;
+        }
+        if (ctx->current.type != PHP_CEDAR_TOKEN_STRING) {
+            php_cedar_log_error(PHP_CEDAR_LOG_ERR, ctx->log, 0,
+                          "php_cedar_parse: "
+                          "datetime() requires a string argument");
+            ctx->error = 1;
+            return NULL;
+        }
+        if (ctx->current.has_star_escape) {
+            php_cedar_log_error(PHP_CEDAR_LOG_ERR, ctx->log, 0,
+                          "php_cedar_parse: "
+                          "invalid escape sequence \\*: "
+                          "only valid in like patterns");
+            ctx->error = 1;
+            return NULL;
+        }
+        node = php_cedar_parser_alloc_node(ctx,
+                                           PHP_CEDAR_NODE_DATETIME_LITERAL);
+        if (node == NULL) {
+            return NULL;
+        }
+        node->u.datetime_literal.text = ctx->current.value;
+        php_cedar_parser_advance(ctx);
+        if (php_cedar_parser_expect(ctx, PHP_CEDAR_TOKEN_RPAREN)
+            != PHP_CEDAR_OK)
+        {
+            return NULL;
+        }
+        return node;
+
+    case PHP_CEDAR_TOKEN_DURATION:
+        php_cedar_parser_advance(ctx);
+        if (php_cedar_parser_expect(ctx, PHP_CEDAR_TOKEN_LPAREN)
+            != PHP_CEDAR_OK)
+        {
+            return NULL;
+        }
+        if (ctx->current.type != PHP_CEDAR_TOKEN_STRING) {
+            php_cedar_log_error(PHP_CEDAR_LOG_ERR, ctx->log, 0,
+                          "php_cedar_parse: "
+                          "duration() requires a string argument");
+            ctx->error = 1;
+            return NULL;
+        }
+        if (ctx->current.has_star_escape) {
+            php_cedar_log_error(PHP_CEDAR_LOG_ERR, ctx->log, 0,
+                          "php_cedar_parse: "
+                          "invalid escape sequence \\*: "
+                          "only valid in like patterns");
+            ctx->error = 1;
+            return NULL;
+        }
+        node = php_cedar_parser_alloc_node(ctx,
+                                           PHP_CEDAR_NODE_DURATION_LITERAL);
+        if (node == NULL) {
+            return NULL;
+        }
+        node->u.duration_literal.text = ctx->current.value;
         php_cedar_parser_advance(ctx);
         if (php_cedar_parser_expect(ctx, PHP_CEDAR_TOKEN_RPAREN)
             != PHP_CEDAR_OK)
@@ -2001,7 +2075,7 @@ php_cedar_parse(php_cedar_pool_t *pool, php_cedar_log_t *log, const php_cedar_st
 
         php_cedar_memzero(policy, sizeof(php_cedar_policy_t));
 
-        /* parse annotations before effect (Phase 4) */
+        /* parse annotations before effect */
         if (php_cedar_parse_annotations(&ctx, policy) != PHP_CEDAR_OK) {
             return NULL;
         }
