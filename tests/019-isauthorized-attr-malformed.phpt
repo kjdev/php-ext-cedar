@@ -15,8 +15,8 @@ $res = $client->isAuthorized([
     "action"    => ["actionType" => "Action", "actionId" => "x"],
     "resource"  => ["entityType" => "Doc",    "entityId" => "d"],
     "context"   => ["contextMap" => [
-        "okScalar"    => ["string"   => "hello"],
-        "badUnknown"  => ["datetime" => "2026-01-01T00:00:00Z"],
+        "okScalar"    => ["string"      => "hello"],
+        "badUnknown"  => ["mysteryType" => "whatever"],
         "badEmpty"    => [],
     ]],
 ]);
@@ -36,7 +36,7 @@ $res = $client->isAuthorized([
         "identifier" => ["entityType" => "User", "entityId" => "alice"],
         "attributes" => [
             "okScalar" => ["string"   => "hello"],
-            "broken"   => ["datetime" => "2026-01-01T00:00:00Z"],
+            "broken"   => ["datetime" => "not-a-valid-datetime"],
         ],
     ]]],
 ]);
