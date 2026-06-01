@@ -520,6 +520,26 @@ cedar_apply_top_attr(php_cedar_eval_ctx_t *ctx, cedar_attr_target_t tgt,
         }
         return PHP_CEDAR_ERROR;
     }
+    if (zend_string_equals_literal(kind, "datetime")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_datetime(ctx, name, &v);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_datetime   (ctx, name, &v);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_datetime (ctx, name, &v);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_datetime  (ctx, name, &v);
+        }
+        return PHP_CEDAR_ERROR;
+    }
+    if (zend_string_equals_literal(kind, "duration")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        switch (tgt) {
+        case CEDAR_TARGET_PRINCIPAL: return php_cedar_eval_ctx_add_principal_attr_duration(ctx, name, &v);
+        case CEDAR_TARGET_ACTION:    return php_cedar_eval_ctx_add_action_attr_duration   (ctx, name, &v);
+        case CEDAR_TARGET_RESOURCE:  return php_cedar_eval_ctx_add_resource_attr_duration (ctx, name, &v);
+        case CEDAR_TARGET_CONTEXT:   return php_cedar_eval_ctx_add_context_attr_duration  (ctx, name, &v);
+        }
+        return PHP_CEDAR_ERROR;
+    }
     if (zend_string_equals_literal(kind, "entityIdentifier")) {
         php_cedar_str_t et, eid;
         if (cedar_pick_entity_ids(inner,
@@ -558,7 +578,6 @@ cedar_apply_top_attr(php_cedar_eval_ctx_t *ctx, cedar_attr_target_t tgt,
         if (set == NULL) return PHP_CEDAR_ERROR;
         return cedar_apply_set_children(set, inner);
     }
-    /* datetime / duration are not supported (upstream gap). */
     return PHP_CEDAR_ERROR;
 }
 
@@ -597,6 +616,14 @@ cedar_apply_record_attr(php_cedar_record_t *rec,
     if (zend_string_equals_literal(kind, "decimal")) {
         if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
         return php_cedar_record_add_decimal(rec, name, &v);
+    }
+    if (zend_string_equals_literal(kind, "datetime")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_record_add_datetime(rec, name, &v);
+    }
+    if (zend_string_equals_literal(kind, "duration")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_record_add_duration(rec, name, &v);
     }
     if (zend_string_equals_literal(kind, "entityIdentifier")) {
         php_cedar_str_t et, eid;
@@ -655,6 +682,14 @@ cedar_apply_set_element(php_cedar_set_t *set, zval *attr_val)
     if (zend_string_equals_literal(kind, "decimal")) {
         if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
         return php_cedar_set_add_decimal(set, &v);
+    }
+    if (zend_string_equals_literal(kind, "datetime")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_set_add_datetime(set, &v);
+    }
+    if (zend_string_equals_literal(kind, "duration")) {
+        if (cedar_zval_to_cedar_str(inner, &v) != PHP_CEDAR_OK) return PHP_CEDAR_ERROR;
+        return php_cedar_set_add_duration(set, &v);
     }
     if (zend_string_equals_literal(kind, "entityIdentifier")) {
         php_cedar_str_t et, eid;

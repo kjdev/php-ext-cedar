@@ -39,6 +39,8 @@ static php_cedar_keyword_t php_cedar_keywords[] = {
     { php_cedar_string("ip"),        PHP_CEDAR_TOKEN_IP },
     { php_cedar_string("decimal"),   PHP_CEDAR_TOKEN_DECIMAL },
     { php_cedar_string("is"),        PHP_CEDAR_TOKEN_IS },
+    { php_cedar_string("datetime"),  PHP_CEDAR_TOKEN_DATETIME },
+    { php_cedar_string("duration"),  PHP_CEDAR_TOKEN_DURATION },
     { php_cedar_null_string,         0 }
 };
 
@@ -331,6 +333,8 @@ php_cedar_lexer_read_string(php_cedar_lexer_t *lexer)
         token.type = PHP_CEDAR_TOKEN_ERROR;
         token.value.data = (unsigned char *) "alloc failed";
         token.value.len = 12;
+        token.raw.data = NULL;
+        token.raw.len = 0;
         token.has_star_escape = 0;
         return token;
     }
@@ -365,6 +369,9 @@ php_cedar_lexer_read_string(php_cedar_lexer_t *lexer)
                     token.value.data =
                         (unsigned char *) "invalid escape sequence";
                     token.value.len = 23;
+                    token.raw.data = NULL;
+                    token.raw.len = 0;
+                    token.has_star_escape = 0;
                     return token;
                 }
 

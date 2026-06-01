@@ -70,54 +70,86 @@ php_cedar_str_t *php_cedar_policy_get_annotation(php_cedar_policy_t *policy,
 php_cedar_eval_ctx_t *php_cedar_eval_ctx_create(php_cedar_pool_t *pool);
 
 void php_cedar_eval_ctx_set_principal(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_principal_attr(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_long(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, int64_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, int64_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_bool(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_flag_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, php_cedar_flag_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_ip(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_decimal(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_datetime(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_duration(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 
 void php_cedar_eval_ctx_set_action(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_action_attr(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_action_attr_long(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, int64_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, int64_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_action_attr_bool(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_flag_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, php_cedar_flag_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_action_attr_ip(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_action_attr_decimal(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_action_attr_datetime(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_action_attr_duration(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 
 void php_cedar_eval_ctx_set_resource(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_attr(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_long(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, int64_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, int64_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_bool(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_flag_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, php_cedar_flag_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_ip(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_decimal(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_datetime(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_duration(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 
 php_cedar_int_t php_cedar_eval_ctx_add_context_attr(php_cedar_eval_ctx_t *ctx,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_context_attr_long(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, int64_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, int64_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_context_attr_bool(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_flag_t value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name, php_cedar_flag_t value);
 php_cedar_int_t php_cedar_eval_ctx_add_context_attr_ip(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_eval_ctx_add_context_attr_decimal(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name, php_cedar_str_t *value);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_context_attr_datetime(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_eval_ctx_add_context_attr_duration(
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *value);
 
 /*
  * Record-valued attribute constructors.
@@ -137,30 +169,34 @@ php_cedar_int_t php_cedar_eval_ctx_add_context_attr_decimal(
  * Returns NULL on allocation failure as well.
  */
 php_cedar_record_t *php_cedar_eval_ctx_add_principal_attr_record(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 php_cedar_record_t *php_cedar_eval_ctx_add_action_attr_record(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 php_cedar_record_t *php_cedar_eval_ctx_add_resource_attr_record(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 php_cedar_record_t *php_cedar_eval_ctx_add_context_attr_record(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 
 php_cedar_int_t php_cedar_record_add_str(php_cedar_record_t *rec,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_record_add_long(php_cedar_record_t *rec,
-    php_cedar_str_t *name, int64_t value);
+    const php_cedar_str_t *name, int64_t value);
 php_cedar_int_t php_cedar_record_add_bool(php_cedar_record_t *rec,
-    php_cedar_str_t *name, php_cedar_flag_t value);
+    const php_cedar_str_t *name, php_cedar_flag_t value);
 php_cedar_int_t php_cedar_record_add_ip(php_cedar_record_t *rec,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_record_add_decimal(php_cedar_record_t *rec,
-    php_cedar_str_t *name, php_cedar_str_t *value);
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_record_add_datetime(php_cedar_record_t *rec,
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_record_add_duration(php_cedar_record_t *rec,
+    const php_cedar_str_t *name, const php_cedar_str_t *value);
 php_cedar_record_t *php_cedar_record_add_record(php_cedar_record_t *rec,
-    php_cedar_str_t *name);
+    const php_cedar_str_t *name);
 php_cedar_int_t php_cedar_record_add_entity(php_cedar_record_t *rec,
-    php_cedar_str_t *name, php_cedar_str_t *type, php_cedar_str_t *id);
+    const php_cedar_str_t *name, const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_set_t *php_cedar_record_add_set(php_cedar_record_t *rec,
-    php_cedar_str_t *name);
+    const php_cedar_str_t *name);
 
 
 /*
@@ -172,26 +208,26 @@ php_cedar_set_t *php_cedar_record_add_set(php_cedar_record_t *rec,
  * Returns NULL on allocation failure.
  */
 php_cedar_set_t *php_cedar_eval_ctx_add_principal_attr_set(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 php_cedar_set_t *php_cedar_eval_ctx_add_action_attr_set(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 php_cedar_set_t *php_cedar_eval_ctx_add_resource_attr_set(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 php_cedar_set_t *php_cedar_eval_ctx_add_context_attr_set(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name);
 
 php_cedar_int_t php_cedar_eval_ctx_add_principal_attr_entity(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_action_attr_entity(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_attr_entity(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_context_attr_entity(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *name,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *name,
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 
 
 /*
@@ -204,14 +240,20 @@ php_cedar_int_t php_cedar_eval_ctx_add_context_attr_entity(
  * and PHP_CEDAR_MAX_RECORD_DEPTH for record values placed inside a
  * set; exceeding either ceiling returns NULL.
  */
-php_cedar_int_t php_cedar_set_add_str(php_cedar_set_t *set, php_cedar_str_t *value);
+php_cedar_int_t php_cedar_set_add_str(php_cedar_set_t *set,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_set_add_long(php_cedar_set_t *set, int64_t value);
 php_cedar_int_t php_cedar_set_add_bool(php_cedar_set_t *set, php_cedar_flag_t value);
-php_cedar_int_t php_cedar_set_add_ip(php_cedar_set_t *set, php_cedar_str_t *value);
+php_cedar_int_t php_cedar_set_add_ip(php_cedar_set_t *set,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_set_add_decimal(php_cedar_set_t *set,
-    php_cedar_str_t *value);
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_set_add_datetime(php_cedar_set_t *set,
+    const php_cedar_str_t *value);
+php_cedar_int_t php_cedar_set_add_duration(php_cedar_set_t *set,
+    const php_cedar_str_t *value);
 php_cedar_int_t php_cedar_set_add_entity(php_cedar_set_t *set,
-    php_cedar_str_t *type, php_cedar_str_t *id);
+    const php_cedar_str_t *type, const php_cedar_str_t *id);
 php_cedar_set_t *php_cedar_set_add_set(php_cedar_set_t *set);
 php_cedar_record_t *php_cedar_set_add_record(php_cedar_set_t *set);
 
@@ -230,11 +272,14 @@ php_cedar_record_t *php_cedar_set_add_record(php_cedar_set_t *set);
  * Returns PHP_CEDAR_OK on success, PHP_CEDAR_ERROR on allocation failure.
  */
 php_cedar_int_t php_cedar_eval_ctx_add_principal_parent(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *type,
+    const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_action_parent(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *type,
+    const php_cedar_str_t *id);
 php_cedar_int_t php_cedar_eval_ctx_add_resource_parent(
-    php_cedar_eval_ctx_t *ctx, php_cedar_str_t *type, php_cedar_str_t *id);
+    php_cedar_eval_ctx_t *ctx, const php_cedar_str_t *type,
+    const php_cedar_str_t *id);
 
 
 /*
@@ -248,8 +293,9 @@ php_cedar_int_t php_cedar_eval_ctx_add_resource_parent(
 php_cedar_array_t *php_cedar_eval_ctx_lookup_parents(
     php_cedar_eval_ctx_t *ctx, php_cedar_uint_t slot);
 php_cedar_int_t php_cedar_entity_in_target(
-    php_cedar_str_t *entity_type, php_cedar_str_t *entity_id, php_cedar_array_t *parents,
-    php_cedar_str_t *target_type, php_cedar_str_t *target_id);
+    const php_cedar_str_t *entity_type, const php_cedar_str_t *entity_id,
+    php_cedar_array_t *parents,
+    const php_cedar_str_t *target_type, const php_cedar_str_t *target_id);
 
 
 #endif /* PHP_CEDAR_EVAL_H */

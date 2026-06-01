@@ -8,9 +8,9 @@ symbols and dependencies fit a PHP extension.
 ## Snapshot commit
 
 - Upstream repository: <https://github.com/kjdev/nxe-cedar>
-- Commit SHA: `cd3d1df5c5642a75b27f40fa502022c864272ed3`
+- Commit SHA: `4f120bd1d1c05868b09e307f5636c5d52a604a2b` (tag `v0.3.0`)
 - Source path: `src/`
-- Snapshot date: 2026-05-27
+- Snapshot date: 2026-06-01
 
 ## File mapping
 
@@ -63,7 +63,6 @@ needed, it should go to upstream first and come back via a fresh import.
 The features below follow whatever the snapshot supports; gaps listed
 here are upstream limitations that this extension does **not** plug:
 
-- No `datetime` / `duration` types or their methods
 - No entity tag operators (`hasTag` / `getTag`)
 - No policy templates (`?principal`, `?resource`)
 - No schema validation
