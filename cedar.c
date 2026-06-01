@@ -1007,12 +1007,9 @@ cedar_evaluate_request(cedar_policy_store_t *store, zval *params,
         return;
     }
 
-    php_cedar_eval_ctx_set_principal(eval_ctx,
-        (php_cedar_str_t *) p_type, (php_cedar_str_t *) p_id);
-    php_cedar_eval_ctx_set_action(eval_ctx,
-        (php_cedar_str_t *) a_type, (php_cedar_str_t *) a_id);
-    php_cedar_eval_ctx_set_resource(eval_ctx,
-        (php_cedar_str_t *) r_type, (php_cedar_str_t *) r_id);
+    php_cedar_eval_ctx_set_principal(eval_ctx, p_type, p_id);
+    php_cedar_eval_ctx_set_action(eval_ctx, a_type, a_id);
+    php_cedar_eval_ctx_set_resource(eval_ctx, r_type, r_id);
 
     array_init(&permit_ids);
     array_init(&forbid_ids);
