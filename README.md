@@ -173,8 +173,8 @@ and the rest of the request payload is byte-for-byte identical.
 
 See [AVP compatibility](#avp-compatibility) for the per-key compatibility
 matrix and [Unsupported features](#unsupported-features) for the known
-gaps (`datetime` / `duration`, entity tags, policy templates, schema
-validation, dynamic identity sources).
+gaps (entity tags, policy templates, schema validation, dynamic identity
+sources).
 
 ## API overview
 
@@ -249,6 +249,8 @@ Both methods accept the same keys as the corresponding AVP API:
 ['boolean' => true]
 ['ipaddr'  => '10.0.0.1']
 ['decimal' => '12.3400']
+['datetime' => '2026-01-01T00:00:00Z']
+['duration' => '1d12h']
 ['entityIdentifier' => ['entityType' => 'MyApp::User', 'entityId' => 'bob']]
 ['set'    => [AttributeValue, ...]]
 ['record' => [name => AttributeValue, ...]]
@@ -340,9 +342,6 @@ The Cedar evaluator follows the feature set bundled from upstream
 nxe-cedar. The following features are **not** available in this
 release:
 
-- `datetime` / `duration` `AttributeValue` types and their methods
-  (`<.`, `≤.`, `≥.`, `>.`, `toDate`, ...). Pass them as `long` (Unix
-  timestamps) and use `<`, `<=`, `>=`, `>` instead.
 - Entity tags (`.hasTag()` / `.getTag()`).
 - Policy templates (`?principal`, `?resource`) and template-linked
   policies.
@@ -352,9 +351,10 @@ release:
   extension delegates that to the caller (see
   [Token verification](#token-verification-is-callers-responsibility)).
 
-A malformed or unsupported `AttributeValue` (for example
-`['datetime' => '...']`) does not abort the request: the entry is
-skipped and an entry is appended to the response's `errors[]`. This
+A malformed or unsupported `AttributeValue` (for example an unknown
+union key, or `['datetime' => 'not-a-date']`) does not abort the
+request: the entry is skipped and an entry is appended to the
+response's `errors[]`. This
 matches AVP's behavior of returning a successful response with
 populated `errors` when a single attribute is broken.
 
