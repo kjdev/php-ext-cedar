@@ -7,7 +7,7 @@
 
 #include "php.h"
 
-#define PHP_CEDAR_VERSION "0.1.0-dev"
+#define PHP_CEDAR_VERSION "0.1.0"
 #define PHP_CEDAR_NS "Cedar"
 
 extern zend_module_entry cedar_module_entry;
