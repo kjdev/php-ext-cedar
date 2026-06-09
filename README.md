@@ -222,12 +222,12 @@ Both methods accept the same keys as the corresponding AVP API:
 
 ```php
 [
-    'policyStoreId' => string,                 // must equal $store->id()
-    'principal' => ['entityType' => ..., 'entityId' => ...],   // isAuthorized only
-    'action'    => ['actionType' => ..., 'actionId' => ...],
-    'resource'  => ['entityType' => ..., 'entityId' => ...],
-    'context'   => ['contextMap' => [name => AttributeValue, ...]],
-    'entities'  => ['entityList' => [
+    'policyStoreId' => string,                 // required, must equal $store->id()
+    'principal' => ['entityType' => ..., 'entityId' => ...],   // required (isAuthorized only)
+    'action'    => ['actionType' => ..., 'actionId' => ...],   // required
+    'resource'  => ['entityType' => ..., 'entityId' => ...],   // required
+    'context'   => ['contextMap' => [name => AttributeValue, ...]],   // optional
+    'entities'  => ['entityList' => [                                 // optional
         [
             'identifier' => ['entityType' => ..., 'entityId' => ...],
             'attributes' => [name => AttributeValue, ...],
@@ -240,6 +240,11 @@ Both methods accept the same keys as the corresponding AVP API:
     'accessToken'   => [claim => value, ...],   // verified claims array
 ]
 ```
+
+`policyStoreId`, `principal` (for `isAuthorized()`), `action`, and
+`resource` are required; `context` and `entities` are optional and may be
+omitted entirely when the policies do not reference them. A request with
+only the required keys is valid and evaluates normally.
 
 `AttributeValue` is the same single-key union AVP uses:
 
@@ -290,6 +295,21 @@ class, not as one of the Cedar exceptions.
 | `AttributeValue` union members | **Complete** for everything the bundled Cedar evaluator supports (see [Unsupported features](#unsupported-features) for the upstream gaps). |
 | Response keys | `decision / determiningPolicies / errors` match exactly. `Aws\Result`'s `ArrayAccess` methods (`->get(...)`) are **not** available — the response is a plain array. |
 | `isAuthorizedWithToken()` | API-shape compatible (`policyStoreId / identityToken / accessToken / action / resource / context / entities`, response includes the derived `principal`), but **the token is expected to be a verified claims array, not a raw JWT string**. See [Token verification](#token-verification-is-callers-responsibility). |
+
+Beyond matching the request / response *shape*, what makes this extension
+substitutable for AVP is that **the same request yields the same
+`decision`**. The evaluation engine is kept logically identical to its
+upstream nxe-cedar snapshot (see
+[`src/cedar/UPSTREAM.md`](src/cedar/UPSTREAM.md)), so it inherits
+nxe-cedar's behavioral conformance: the C implementation is
+differential-tested against the upstream `cedar-policy` reference crate,
+with **100% C-vs-reference parity** reported over the official Cedar
+integration-test corpus (see
+[nxe-cedar's conformance notes](https://github.com/kjdev/nxe-cedar/blob/main/tests/conformance/README.md)).
+This parity guarantee covers only the **supported subset**: the
+[unsupported features](#unsupported-features) (entity tags, policy
+templates, schema validation, dynamic identity sources) lie outside the
+conformance corpus and are not part of the claim.
 
 For a worked example of swapping AVP and this extension behind a single
 interface, see
