@@ -333,8 +333,10 @@ $result = $client->isAuthorizedWithToken([
 ]);
 ```
 
-When both `identityToken` and `accessToken` are supplied,
-`identityToken` wins — same behavior as AVP.
+When both `identityToken` and `accessToken` are supplied, this extension
+uses `identityToken` and ignores `accessToken`. This differs slightly from
+AVP, which accepts both and resolves the principal and claim mapping from
+the configured identity source and each token's `token_use` claim.
 
 ## Unsupported features
 
@@ -342,7 +344,8 @@ The Cedar evaluator follows the feature set bundled from upstream
 nxe-cedar. The following features are **not** available in this
 release:
 
-- Entity tags (`.hasTag()` / `.getTag()`).
+- Entity tags (`.hasTag()` / `.getTag()`). A `tags` key on an
+  `entities.entityList[]` entry is silently ignored rather than raising an error.
 - Policy templates (`?principal`, `?resource`) and template-linked
   policies.
 - Schema validation (`@anyOf`, `@oneOf`, declared attributes).
@@ -350,6 +353,8 @@ release:
   user pool or generic OIDC IdP and derive the principal. This
   extension delegates that to the caller (see
   [Token verification](#token-verification-is-callers-responsibility)).
+- Passing `context` as raw Cedar JSON via the `cedarJson` key. Only
+  `contextMap` is supported; a `cedarJson` context is silently ignored.
 
 A malformed or unsupported `AttributeValue` (for example an unknown
 union key, or `['datetime' => 'not-a-date']`) does not abort the
