@@ -222,12 +222,12 @@ Both methods accept the same keys as the corresponding AVP API:
 
 ```php
 [
-    'policyStoreId' => string,                 // must equal $store->id()
-    'principal' => ['entityType' => ..., 'entityId' => ...],   // isAuthorized only
-    'action'    => ['actionType' => ..., 'actionId' => ...],
-    'resource'  => ['entityType' => ..., 'entityId' => ...],
-    'context'   => ['contextMap' => [name => AttributeValue, ...]],
-    'entities'  => ['entityList' => [
+    'policyStoreId' => string,                 // required, must equal $store->id()
+    'principal' => ['entityType' => ..., 'entityId' => ...],   // required (isAuthorized only)
+    'action'    => ['actionType' => ..., 'actionId' => ...],   // required
+    'resource'  => ['entityType' => ..., 'entityId' => ...],   // required
+    'context'   => ['contextMap' => [name => AttributeValue, ...]],   // optional
+    'entities'  => ['entityList' => [                                 // optional
         [
             'identifier' => ['entityType' => ..., 'entityId' => ...],
             'attributes' => [name => AttributeValue, ...],
@@ -240,6 +240,11 @@ Both methods accept the same keys as the corresponding AVP API:
     'accessToken'   => [claim => value, ...],   // verified claims array
 ]
 ```
+
+`policyStoreId`, `principal` (for `isAuthorized()`), `action`, and
+`resource` are required; `context` and `entities` are optional and may be
+omitted entirely when the policies do not reference them. A request with
+only the required keys is valid and evaluates normally.
 
 `AttributeValue` is the same single-key union AVP uses:
 
