@@ -9,6 +9,7 @@
 #include "config.h"
 #endif
 
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 
@@ -51,7 +52,7 @@ static inline cedar_policy_store_t *
 cedar_policy_store_from_obj(zend_object *obj)
 {
     return (cedar_policy_store_t *)
-        ((char *) obj - XtOffsetOf(cedar_policy_store_t, std));
+        ((char *) obj - offsetof(cedar_policy_store_t, std));
 }
 #define Z_CEDAR_POLICY_STORE_P(zv)  cedar_policy_store_from_obj(Z_OBJ_P(zv))
 
@@ -269,7 +270,7 @@ static inline cedar_authz_client_t *
 cedar_authz_client_from_obj(zend_object *obj)
 {
     return (cedar_authz_client_t *)
-        ((char *) obj - XtOffsetOf(cedar_authz_client_t, std));
+        ((char *) obj - offsetof(cedar_authz_client_t, std));
 }
 #define Z_CEDAR_AUTHZ_CLIENT_P(zv)  cedar_authz_client_from_obj(Z_OBJ_P(zv))
 
@@ -1294,7 +1295,7 @@ PHP_MINIT_FUNCTION(cedar)
     cedar_ce_PolicyStore->create_object = cedar_policy_store_create;
     memcpy(&cedar_policy_store_handlers, zend_get_std_object_handlers(),
            sizeof(zend_object_handlers));
-    cedar_policy_store_handlers.offset    = XtOffsetOf(cedar_policy_store_t, std);
+    cedar_policy_store_handlers.offset    = offsetof(cedar_policy_store_t, std);
     cedar_policy_store_handlers.free_obj  = cedar_policy_store_free;
     cedar_policy_store_handlers.clone_obj = NULL;
 
@@ -1303,7 +1304,7 @@ PHP_MINIT_FUNCTION(cedar)
     cedar_ce_AuthorizationClient->create_object = cedar_authz_client_create;
     memcpy(&cedar_authz_client_handlers, zend_get_std_object_handlers(),
            sizeof(zend_object_handlers));
-    cedar_authz_client_handlers.offset    = XtOffsetOf(cedar_authz_client_t, std);
+    cedar_authz_client_handlers.offset    = offsetof(cedar_authz_client_t, std);
     cedar_authz_client_handlers.free_obj  = cedar_authz_client_free;
     cedar_authz_client_handlers.clone_obj = NULL;
 
